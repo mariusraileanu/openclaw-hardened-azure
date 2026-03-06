@@ -239,7 +239,19 @@ func main() {
 		}
 	}), 5*time.Second, "request timeout"))
 
-	log.Printf("signal-proxy starting on %s, upstream=%s", listenAddr, upstreamURL)
+	// Optional TLS: when TLS_CERT_FILE and TLS_KEY_FILE are set, the server
+	// terminates TLS itself. In the default Azure Container Apps deployment,
+	// these are left empty — the Envoy sidecar handles TLS termination at the
+	// ingress layer, and the container runs plain HTTP inside the private VNet.
+	tlsCert := os.Getenv("TLS_CERT_FILE")
+	tlsKey := os.Getenv("TLS_KEY_FILE")
+	tlsEnabled := tlsCert != "" && tlsKey != ""
+
+	if tlsEnabled {
+		log.Printf("signal-proxy starting HTTPS on %s, upstream=%s", listenAddr, upstreamURL)
+	} else {
+		log.Printf("signal-proxy starting HTTP on %s, upstream=%s (TLS not configured — expects TLS termination at ingress layer)", listenAddr, upstreamURL)
+	}
 
 	// Wrap mux with auth middleware (skips /healthz for health probes).
 	// When AUTH_TOKEN is empty, all requests are allowed (backward-compatible).
@@ -271,7 +283,12 @@ func main() {
 		}
 	}()
 
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	if tlsEnabled {
+		err = srv.ListenAndServeTLS(tlsCert, tlsKey)
+	} else {
+		err = srv.ListenAndServe()
+	}
+	if err != nil && err != http.ErrServerClosed {
 		log.Fatalf("server error: %v", err)
 	}
 	log.Println("signal-proxy stopped")
