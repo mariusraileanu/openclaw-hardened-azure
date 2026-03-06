@@ -6,4 +6,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /signal-proxy .
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:a9329520abc449e3b14d5bc3a6ffae065bdde0f02667fa10880c49b35c109fd1
 COPY --from=build /signal-proxy /signal-proxy
 EXPOSE 8080
+USER nonroot
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["/signal-proxy", "--healthcheck"]
 ENTRYPOINT ["/signal-proxy"]

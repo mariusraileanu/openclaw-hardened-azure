@@ -155,6 +155,31 @@ func securityHeadersMiddleware(next http.Handler) http.Handler {
 }
 
 func main() {
+	// --healthcheck mode: perform an HTTP GET to localhost /healthz and exit.
+	// Used by Docker HEALTHCHECK since distroless has no shell or curl.
+	if len(os.Args) > 1 && os.Args[1] == "--healthcheck" {
+		listenAddr := os.Getenv("LISTEN_ADDR")
+		if listenAddr == "" {
+			listenAddr = ":8080"
+		}
+		// Extract port from listenAddr (formats: ":8080" or "0.0.0.0:8080")
+		port := listenAddr
+		if idx := strings.LastIndex(listenAddr, ":"); idx >= 0 {
+			port = listenAddr[idx+1:]
+		}
+		resp, err := http.Get("http://localhost:" + port + "/healthz")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "healthcheck failed: %v\n", err)
+			os.Exit(1)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			os.Exit(0)
+		}
+		fmt.Fprintf(os.Stderr, "healthcheck: status %d\n", resp.StatusCode)
+		os.Exit(1)
+	}
+
 	upstreamURL := os.Getenv("SIGNAL_CLI_URL")
 	if upstreamURL == "" {
 		log.Fatal("SIGNAL_CLI_URL env var is required")

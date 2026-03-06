@@ -132,27 +132,40 @@ resource "azurerm_user_assigned_identity" "user" {
 }
 
 # ---------------------------------------------------------------------------
+# Secret expiration: 1 year from initial deployment (KICS finding).
+# Uses time_static so the timestamp is fixed at creation time — subsequent
+# terraform apply runs won't recreate secrets with a rolling expiry date.
+# ---------------------------------------------------------------------------
+resource "time_static" "secret_expiry_base" {}
+
+# ---------------------------------------------------------------------------
 # Store per-user secrets in Key Vault
 # ---------------------------------------------------------------------------
 resource "azurerm_key_vault_secret" "compass_api_key" {
-  name         = "${var.user_slug}-compass-api-key"
-  value        = var.compass_api_key
-  key_vault_id = local.shared.key_vault_id
-  tags         = local.tags
+  name            = "${var.user_slug}-compass-api-key"
+  value           = var.compass_api_key
+  key_vault_id    = local.shared.key_vault_id
+  content_type    = "text/plain"
+  expiration_date = timeadd(time_static.secret_expiry_base.rfc3339, "8760h")
+  tags            = local.tags
 }
 
 resource "azurerm_key_vault_secret" "graph_mcp_url" {
-  name         = "${var.user_slug}-graph-mcp-url"
-  value        = var.graph_mcp_url
-  key_vault_id = local.shared.key_vault_id
-  tags         = local.tags
+  name            = "${var.user_slug}-graph-mcp-url"
+  value           = var.graph_mcp_url
+  key_vault_id    = local.shared.key_vault_id
+  content_type    = "text/plain"
+  expiration_date = timeadd(time_static.secret_expiry_base.rfc3339, "8760h")
+  tags            = local.tags
 }
 
 resource "azurerm_key_vault_secret" "gateway_token" {
-  name         = "${var.user_slug}-gateway-token"
-  value        = var.openclaw_gateway_auth_token
-  key_vault_id = local.shared.key_vault_id
-  tags         = local.tags
+  name            = "${var.user_slug}-gateway-token"
+  value           = var.openclaw_gateway_auth_token
+  key_vault_id    = local.shared.key_vault_id
+  content_type    = "text/plain"
+  expiration_date = timeadd(time_static.secret_expiry_base.rfc3339, "8760h")
+  tags            = local.tags
 }
 
 # ---------------------------------------------------------------------------

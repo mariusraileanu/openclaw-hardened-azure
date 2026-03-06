@@ -7,14 +7,30 @@ services:
       dockerfile: Dockerfile.wrapper
     image: openclaw-golden:local
     ports:
-      - "18789:18789"
+      - "127.0.0.1:18789:18789"
     environment:
-      # These will pull from your local shell if exported, or use fallback dummies
-      - COMPASS_API_KEY=${COMPASS_API_KEY:-sk-dummy-key}
-      - GRAPH_MCP_URL=${GRAPH_MCP_URL:-http://dummy-mcp}
-      - OPENCLAW_GATEWAY_AUTH_TOKEN=${OPENCLAW_GATEWAY_AUTH_TOKEN:-dummy-token}
+      # No fallback defaults — set these in .env (see .env.example)
+      - COMPASS_API_KEY=${COMPASS_API_KEY}
+      - GRAPH_MCP_URL=${GRAPH_MCP_URL}
+      - OPENCLAW_GATEWAY_AUTH_TOKEN=${OPENCLAW_GATEWAY_AUTH_TOKEN}
     volumes:
+      # Single-container volume — not shared across containers (KICS info-level false positive)
       - openclaw-data:/app/data
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:18789/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2g
 
 volumes:
   openclaw-data:
