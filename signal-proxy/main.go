@@ -36,11 +36,26 @@ var (
 
 // maskPhone redacts the middle digits of a phone number for log safety.
 // "+15551234567" → "+155***567", short numbers pass through as-is.
+// The result is also sanitized to prevent log forging via control characters.
 func maskPhone(phone string) string {
-	if len(phone) <= 6 {
-		return phone
+	clean := sanitizeLog(phone)
+	if len(clean) <= 6 {
+		return clean
 	}
-	return phone[:4] + "***" + phone[len(phone)-3:]
+	return clean[:4] + "***" + clean[len(clean)-3:]
+}
+
+// sanitizeLog strips control characters (newlines, carriage returns, tabs) from
+// a string before it is written to logs. This prevents log forging attacks where
+// user-controlled input (e.g. phone numbers from URL paths) could inject fake
+// log entries via embedded newline characters.
+func sanitizeLog(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == '\t' {
+			return '_'
+		}
+		return r
+	}, s)
 }
 
 // authMiddleware validates a bearer token on every request except health checks.
@@ -123,6 +138,18 @@ func extractPathToken(path string) string {
 		return "" // old format /user/{phone}/api/v1/... — no embedded token
 	}
 	return token
+}
+
+// securityHeadersMiddleware adds standard security headers to all responses.
+// HSTS (Strict-Transport-Security) instructs clients to use HTTPS exclusively.
+// While signal-proxy runs behind an internal load balancer with no browser
+// traffic, the header satisfies SAST scanners and follows defense-in-depth.
+func securityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func main() {
@@ -259,6 +286,9 @@ func main() {
 	if authToken != "" {
 		handler = authMiddleware(mux, authToken)
 	}
+
+	// Add security headers (HSTS, etc.) to all responses.
+	handler = securityHeadersMiddleware(handler)
 
 	srv := &http.Server{
 		Addr:        listenAddr,
