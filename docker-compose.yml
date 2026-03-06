@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  openclaw:
+    build:
+      context: .
+      dockerfile: Dockerfile.wrapper
+    image: openclaw-golden:local
+    ports:
+      - "18789:18789"
+    environment:
+      # These will pull from your local shell if exported, or use fallback dummies
+      - COMPASS_API_KEY=${COMPASS_API_KEY:-sk-dummy-key}
+      - GRAPH_MCP_URL=${GRAPH_MCP_URL:-http://dummy-mcp}
+      - OPENCLAW_GATEWAY_AUTH_TOKEN=${OPENCLAW_GATEWAY_AUTH_TOKEN:-dummy-token}
+    volumes:
+      - openclaw-data:/app/data
+
+volumes:
+  openclaw-data:

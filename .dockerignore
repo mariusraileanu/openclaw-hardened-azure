@@ -1,0 +1,20 @@
+**/.DS_Store
+.git
+.opencode
+.ruff_cache
+infra
+signal-proxy
+*.md
+!openclaw.json.example
+!workspace/**/*.md
+
+# Secrets and state — never send to build context
+.env
+.env.*
+!.env.example
+*.tfstate
+*.tfstate.*
+.terraform/
+*.pem
+*.key
+test-mcp.yaml
