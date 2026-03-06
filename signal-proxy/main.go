@@ -142,11 +142,13 @@ func extractPathToken(path string) string {
 
 // securityHeadersMiddleware adds standard security headers to all responses.
 // HSTS (Strict-Transport-Security) instructs clients to use HTTPS exclusively.
+// CSP (Content-Security-Policy) blocks all content loading (no HTML is served).
 // While signal-proxy runs behind an internal load balancer with no browser
-// traffic, the header satisfies SAST scanners and follows defense-in-depth.
+// traffic, these headers satisfy SAST scanners and follow defense-in-depth.
 func securityHeadersMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		next.ServeHTTP(w, r)
 	})
