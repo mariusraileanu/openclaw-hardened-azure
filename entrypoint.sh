@@ -131,12 +131,20 @@ fi
 if [[ ! -d "${OPENCLAW_STATE_DIR}/workspace" ]]; then
   echo "Copying workspace template to ${OPENCLAW_STATE_DIR}/workspace/ ..."
   cp -r /app/config/workspace "${OPENCLAW_STATE_DIR}/workspace"
+fi
 
-  # Resolve env var placeholders in skill docs (e.g., GRAPH_MCP_URL in SKILL.md)
-  SKILL_FILE="${OPENCLAW_STATE_DIR}/workspace/skills/m365-graph-gateway/SKILL.md"
-  if [[ -n "${GRAPH_MCP_URL:-}" ]] && [[ -f "${SKILL_FILE}" ]]; then
+# Always resolve env var placeholders in skill docs on every boot.
+# This ensures GRAPH_MCP_URL changes propagate to existing workspaces
+# (same pattern as the Compass baseUrl and Signal httpUrl patching above).
+SKILL_FILE="${OPENCLAW_STATE_DIR}/workspace/skills/m365-graph-gateway/SKILL.md"
+if [[ -n "${GRAPH_MCP_URL:-}" ]] && [[ -f "${SKILL_FILE}" ]]; then
+  # Re-template from the image source (which has ${GRAPH_MCP_URL} placeholders)
+  # to ensure we always get a clean substitution even if the file was previously
+  # written with stale or missing values.
+  SOURCE_SKILL="/app/config/workspace/skills/m365-graph-gateway/SKILL.md"
+  if [[ -f "${SOURCE_SKILL}" ]]; then
     echo "Resolving GRAPH_MCP_URL in m365-graph-gateway SKILL.md ..."
-    envsubst '${GRAPH_MCP_URL}' < "${SKILL_FILE}" > "${SKILL_FILE}.tmp" \
+    envsubst '${GRAPH_MCP_URL}' < "${SOURCE_SKILL}" > "${SKILL_FILE}.tmp" \
       && mv "${SKILL_FILE}.tmp" "${SKILL_FILE}"
   fi
 fi
