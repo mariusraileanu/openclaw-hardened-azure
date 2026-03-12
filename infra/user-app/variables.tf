@@ -19,16 +19,32 @@ variable "location" {
 }
 
 # ---------------------------------------------------------------------------
-# Shared Module State Backend (for terraform_remote_state data source)
+# Shared Resources (looked up by name via data sources)
 # ---------------------------------------------------------------------------
-variable "tf_state_resource_group" {
-  description = "Resource group containing the Terraform state storage account (e.g. rg-openclaw-tfstate-dev)"
+variable "resource_group_name" {
+  description = "Name of the shared resource group containing CAE, ACR, KV (e.g. rg-openclaw-prod)"
   type        = string
 }
 
-variable "tf_state_storage_account" {
-  description = "Storage account name for the Terraform remote state (e.g. tfopenclawstatedev)"
+variable "key_vault_name" {
+  description = "Name of the shared Key Vault (e.g. kvopenclawprod)"
   type        = string
+}
+
+variable "acr_name" {
+  description = "Name of the Azure Container Registry (e.g. openclawprodacr)"
+  type        = string
+}
+
+variable "cae_name" {
+  description = "Name of the Container Apps Environment (e.g. cae-openclaw-prod)"
+  type        = string
+}
+
+variable "cae_nfs_storage_name" {
+  description = "Name of the NFS storage mount registered in the CAE (e.g. openclaw-nfs-prod)"
+  type        = string
+  default     = "openclaw-nfs"
 }
 
 # ---------------------------------------------------------------------------
@@ -37,6 +53,12 @@ variable "tf_state_storage_account" {
 variable "image_ref" {
   description = "Full container image reference (e.g. myacr.azurecr.io/openclaw-golden:v1.0.0)"
   type        = string
+}
+
+variable "compass_base_url" {
+  description = "Compass provider base URL (e.g. https://api.core42.ai/v1)"
+  type        = string
+  default     = "https://api.core42.ai/v1"
 }
 
 variable "compass_api_key" {

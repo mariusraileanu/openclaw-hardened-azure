@@ -1,22 +1,31 @@
 data "azurerm_client_config" "current" {}
 
 # ---------------------------------------------------------------------------
-# Read shared module outputs from remote state (no naming convention coupling)
+# Look up shared resources by name (no Terraform remote state dependency).
+# Works regardless of whether shared infra was provisioned by Terraform,
+# az CLI, ARM templates, or any other tool.
 # ---------------------------------------------------------------------------
-data "terraform_remote_state" "shared" {
-  backend = "azurerm"
-  config = {
-    resource_group_name  = var.tf_state_resource_group
-    storage_account_name = var.tf_state_storage_account
-    container_name       = "tfstate"
-    key                  = "shared.tfstate"
-  }
+data "azurerm_resource_group" "shared" {
+  name = var.resource_group_name
+}
+
+data "azurerm_key_vault" "shared" {
+  name                = var.key_vault_name
+  resource_group_name = var.resource_group_name
+}
+
+data "azurerm_container_app_environment" "shared" {
+  name                = var.cae_name
+  resource_group_name = var.resource_group_name
+}
+
+data "azurerm_container_registry" "shared" {
+  name                = var.acr_name
+  resource_group_name = var.resource_group_name
 }
 
 locals {
-  shared = data.terraform_remote_state.shared.outputs
-
-  app_name       = "ca-openclaw-${var.user_slug}"
+  app_name       = "ca-openclaw-${var.environment}-${var.user_slug}"
   signal_enabled = var.signal_cli_url != "" && var.signal_bot_number != "" && var.signal_user_phone != ""
 
   tags = {
@@ -30,6 +39,7 @@ locals {
   # blocks in azurerm_container_app.user so the REST PATCH doesn't clobber them).
   container_env = concat(
     [
+      { name = "COMPASS_BASE_URL", value = var.compass_base_url },
       { name = "COMPASS_API_KEY", secretRef = "compass-api-key" },
       { name = "GRAPH_MCP_URL", secretRef = "graph-mcp-url" },
       { name = "OPENCLAW_GATEWAY_AUTH_TOKEN", secretRef = "gateway-token" },
@@ -53,7 +63,7 @@ locals {
         volumes = [
           {
             name        = "data"
-            storageName = "openclaw-nfs"
+            storageName = var.cae_nfs_storage_name
             storageType = "NfsAzureFile"
           }
         ]
@@ -118,12 +128,12 @@ locals {
 }
 
 # ---------------------------------------------------------------------------
-# Per-User Managed Identity (KV secret access only; ACR pull uses shared identity)
+# Per-User Managed Identity (used for both ACR pull and KV secret access)
 # ---------------------------------------------------------------------------
 resource "azurerm_user_assigned_identity" "user" {
-  name                = "id-openclaw-${var.user_slug}-${var.environment}"
+  name                = "id-openclaw-${var.environment}-${var.user_slug}"
   location            = var.location
-  resource_group_name = local.shared.resource_group_name
+  resource_group_name = data.azurerm_resource_group.shared.name
   tags                = local.tags
 
   lifecycle {
@@ -132,8 +142,17 @@ resource "azurerm_user_assigned_identity" "user" {
 }
 
 # ---------------------------------------------------------------------------
+# ACR Pull: per-user identity can pull images from the shared registry
+# ---------------------------------------------------------------------------
+resource "azurerm_role_assignment" "acr_pull" {
+  scope                = data.azurerm_container_registry.shared.id
+  role_definition_name = "AcrPull"
+  principal_id         = azurerm_user_assigned_identity.user.principal_id
+}
+
+# ---------------------------------------------------------------------------
 # Secret expiration: 1 year from initial deployment (KICS finding).
-# Uses time_static so the timestamp is fixed at creation time — subsequent
+# Uses time_static so the timestamp is fixed at creation time -- subsequent
 # terraform apply runs won't recreate secrets with a rolling expiry date.
 # ---------------------------------------------------------------------------
 resource "time_static" "secret_expiry_base" {}
@@ -144,7 +163,7 @@ resource "time_static" "secret_expiry_base" {}
 resource "azurerm_key_vault_secret" "compass_api_key" {
   name            = "${var.user_slug}-compass-api-key"
   value           = var.compass_api_key
-  key_vault_id    = local.shared.key_vault_id
+  key_vault_id    = data.azurerm_key_vault.shared.id
   content_type    = "text/plain"
   expiration_date = timeadd(time_static.secret_expiry_base.rfc3339, "8760h")
   tags            = local.tags
@@ -153,7 +172,7 @@ resource "azurerm_key_vault_secret" "compass_api_key" {
 resource "azurerm_key_vault_secret" "graph_mcp_url" {
   name            = "${var.user_slug}-graph-mcp-url"
   value           = var.graph_mcp_url
-  key_vault_id    = local.shared.key_vault_id
+  key_vault_id    = data.azurerm_key_vault.shared.id
   content_type    = "text/plain"
   expiration_date = timeadd(time_static.secret_expiry_base.rfc3339, "8760h")
   tags            = local.tags
@@ -162,7 +181,7 @@ resource "azurerm_key_vault_secret" "graph_mcp_url" {
 resource "azurerm_key_vault_secret" "gateway_token" {
   name            = "${var.user_slug}-gateway-token"
   value           = var.openclaw_gateway_auth_token
-  key_vault_id    = local.shared.key_vault_id
+  key_vault_id    = data.azurerm_key_vault.shared.id
   content_type    = "text/plain"
   expiration_date = timeadd(time_static.secret_expiry_base.rfc3339, "8760h")
   tags            = local.tags
@@ -196,6 +215,7 @@ resource "azurerm_role_assignment" "kv_secret_gateway" {
 # ---------------------------------------------------------------------------
 resource "time_sleep" "rbac_propagation" {
   depends_on = [
+    azurerm_role_assignment.acr_pull,
     azurerm_role_assignment.kv_secret_compass,
     azurerm_role_assignment.kv_secret_graph_mcp,
     azurerm_role_assignment.kv_secret_gateway,
@@ -209,8 +229,8 @@ resource "time_sleep" "rbac_propagation" {
 # ---------------------------------------------------------------------------
 resource "azurerm_container_app" "user" {
   name                         = local.app_name
-  container_app_environment_id = local.shared.cae_id
-  resource_group_name          = local.shared.resource_group_name
+  container_app_environment_id = data.azurerm_container_app_environment.shared.id
+  resource_group_name          = data.azurerm_resource_group.shared.name
   revision_mode                = "Single"
   tags                         = local.tags
 
@@ -226,16 +246,13 @@ resource "azurerm_container_app" "user" {
   }
 
   identity {
-    type = "UserAssigned"
-    identity_ids = [
-      local.shared.managed_identity_id,       # ACR pull (shared)
-      azurerm_user_assigned_identity.user.id, # KV secrets (per-user)
-    ]
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.user.id]
   }
 
   registry {
-    server   = local.shared.acr_login_server
-    identity = local.shared.managed_identity_id
+    server   = data.azurerm_container_registry.shared.login_server
+    identity = azurerm_user_assigned_identity.user.id
   }
 
   secret {
@@ -282,7 +299,12 @@ resource "azurerm_container_app" "user" {
       cpu    = var.cpu
       memory = var.memory
 
-      # NOTE: volume_mounts not defined here — added by null_resource patch
+      # NOTE: volume_mounts not defined here -- added by null_resource patch
+
+      env {
+        name  = "COMPASS_BASE_URL"
+        value = var.compass_base_url
+      }
 
       env {
         name        = "COMPASS_API_KEY"

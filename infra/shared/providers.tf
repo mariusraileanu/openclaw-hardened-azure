@@ -9,6 +9,7 @@ terraform {
     storage_account_name = ""
     container_name       = "tfstate"
     key                  = "shared.tfstate"
+    use_azuread_auth     = true
   }
 
   required_providers {

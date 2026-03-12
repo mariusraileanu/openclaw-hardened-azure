@@ -3,27 +3,34 @@
 # Shared Platform + Per-User Isolated Deployment
 # ===========================================================================
 
-# Load .env file if it exists
-ifneq (,$(wildcard ./.env))
-    include .env
-    export
-endif
-
 # ---------------------------------------------------------------------------
 # Environment Configuration (override via export or command-line)
+# AZURE_ENVIRONMENT must be set BEFORE the env file include so the correct
+# file is loaded.  Override on the command line:  make ... AZURE_ENVIRONMENT=prod
 # ---------------------------------------------------------------------------
 AZURE_ENVIRONMENT      ?= dev
+
+# Load per-environment env file (e.g. .env.azure.dev, .env.azure.prod).
+# The leading hyphen suppresses errors when the file does not exist.
+-include .env.azure.$(AZURE_ENVIRONMENT)
+export
+
 AZURE_LOCATION         ?= eastus
 AZURE_OWNER_SLUG       ?= platform
 
 # ---------------------------------------------------------------------------
-# Derived Names (strict naming contract)
+# Derived Names (naming contract — overridable via env file for non-standard
+# environments like prod whose resources were provisioned externally)
 # ---------------------------------------------------------------------------
-AZURE_RESOURCE_GROUP        = rg-openclaw-shared-$(AZURE_ENVIRONMENT)
-AZURE_CONTAINERAPPS_ENV     = cae-openclaw-shared-$(AZURE_ENVIRONMENT)
-AZURE_ACR_NAME              = openclawshared$(AZURE_ENVIRONMENT)acr
-AZURE_KEY_VAULT_NAME        = kvopenclawshared$(AZURE_ENVIRONMENT)
-AZURE_STORAGE_ACCOUNT_NAME  = stopenclawshared$(AZURE_ENVIRONMENT)
+AZURE_RESOURCE_GROUP        ?= rg-openclaw-shared-$(AZURE_ENVIRONMENT)
+AZURE_CONTAINERAPPS_ENV     ?= cae-openclaw-shared-$(AZURE_ENVIRONMENT)
+AZURE_ACR_NAME              ?= openclawshared$(AZURE_ENVIRONMENT)acr
+AZURE_KEY_VAULT_NAME        ?= kvopenclawshared$(AZURE_ENVIRONMENT)
+AZURE_STORAGE_ACCOUNT_NAME  ?= stopenclawshared$(AZURE_ENVIRONMENT)
+
+# CAE NFS mount name (registered in the Container Apps Environment)
+# Dev default: openclaw-nfs  |  Prod override: openclaw-nfs-prod
+CAE_NFS_STORAGE_NAME        ?= openclaw-nfs
 
 IMAGE_TAG ?= latest
 IMAGE_REF ?= $(AZURE_ACR_NAME).azurecr.io/openclaw-golden:$(IMAGE_TAG)
@@ -36,8 +43,8 @@ SIGNAL_PROXY_IMAGE = $(AZURE_ACR_NAME).azurecr.io/signal-proxy:$(IMAGE_TAG)
 # ---------------------------------------------------------------------------
 TF_SHARED_DIR   = infra/shared
 TF_USER_DIR     = infra/user-app
-TF_STATE_RG     = rg-openclaw-tfstate-$(AZURE_ENVIRONMENT)
-TF_STATE_SA     = tfopenclawstate$(AZURE_ENVIRONMENT)
+TF_STATE_RG     ?= rg-openclaw-tfstate-$(AZURE_ENVIRONMENT)
+TF_STATE_SA     ?= tfopenclawstate$(AZURE_ENVIRONMENT)
 
 define TF_BACKEND_CONFIG
 -backend-config="resource_group_name=$(TF_STATE_RG)" \
@@ -78,7 +85,8 @@ define TF_SHARED_VARS
 endef
 
 # NFS storage account name (for firewall dance)
-NFS_SA_NAME = nfsopenclawshared$(AZURE_ENVIRONMENT)
+# Dev default: nfsopenclawshared<env>  |  Prod override in .env.azure.prod
+NFS_SA_NAME ?= nfsopenclawshared$(AZURE_ENVIRONMENT)
 
 # ===========================================================================
 # SHARED INFRASTRUCTURE
@@ -224,13 +232,13 @@ signal-logs-proxy: ## Tail signal-proxy container logs
 # GRAPH_MCP_URL is auto-discovered from Azure at deploy time
 define check_user_vars
 	$(if $(USER_SLUG),,$(error USER_SLUG is required))
-	$(if $(COMPASS_API_KEY),,$(error COMPASS_API_KEY is required — set in .env))
-	$(if $(OPENCLAW_GATEWAY_AUTH_TOKEN),,$(error OPENCLAW_GATEWAY_AUTH_TOKEN is required — set in .env))
+	$(if $(COMPASS_API_KEY),,$(error COMPASS_API_KEY is required — set in .env.azure.$(AZURE_ENVIRONMENT)))
+	$(if $(OPENCLAW_GATEWAY_AUTH_TOKEN),,$(error OPENCLAW_GATEWAY_AUTH_TOKEN is required — set in .env.azure.$(AZURE_ENVIRONMENT)))
 endef
 unexport check_user_vars
 
 tf-init-user: ## Initialize Terraform for user-app module
-	terraform -chdir=$(TF_USER_DIR) init $(TF_BACKEND_CONFIG)
+	terraform -chdir=$(TF_USER_DIR) init
 
 tf-workspace-user: ## Select (or create) a per-user Terraform workspace
 	$(if $(USER_SLUG),,$(error USER_SLUG is required))
@@ -239,12 +247,12 @@ tf-workspace-user: ## Select (or create) a per-user Terraform workspace
 azure-deploy-user: tf-init-user tf-workspace-user ## Deploy an isolated Container App for a user
 	$(call check_user_vars)
 	@echo "============================================="
-	@echo " Deploying user app: oc-$(USER_SLUG)"
+	@echo " Deploying user app: ca-openclaw-$(AZURE_ENVIRONMENT)-$(USER_SLUG)"
 	@echo " Image: $(IMAGE_REF)"
 	@echo " Environment: $(AZURE_ENVIRONMENT)"
 	@echo "============================================="
-	$(eval SIGNAL_CLI_URL_TF := $(shell terraform -chdir=$(TF_SHARED_DIR) output -json signal_cli_url 2>/dev/null | tr -d '"' || echo ""))
-	$(eval SIGNAL_PROXY_AUTH_TOKEN_TF := $(shell terraform -chdir=$(TF_SHARED_DIR) output -json signal_proxy_auth_token 2>/dev/null | tr -d '"' || echo ""))
+	$(eval SIGNAL_CLI_URL_TF := $(or $(SIGNAL_CLI_URL),$(shell terraform -chdir=$(TF_SHARED_DIR) output -json signal_cli_url 2>/dev/null | tr -d '"' || echo "")))
+	$(eval SIGNAL_PROXY_AUTH_TOKEN_TF := $(or $(SIGNAL_PROXY_AUTH_TOKEN),$(shell terraform -chdir=$(TF_SHARED_DIR) output -json signal_proxy_auth_token 2>/dev/null | tr -d '"' || echo "")))
 	$(eval SIGNAL_VARS := )
 	$(if $(and $(SIGNAL_CLI_URL_TF),$(SIGNAL_BOT_NUMBER),$(SIGNAL_USER_PHONE)), \
 		$(eval SIGNAL_VARS := -var="signal_bot_number=$(SIGNAL_BOT_NUMBER)") \
@@ -253,11 +261,11 @@ azure-deploy-user: tf-init-user tf-workspace-user ## Deploy an isolated Containe
 	@set -e; \
 	echo "--- Discovering GRAPH_MCP_URL for $(USER_SLUG) ---"; \
 	GW_FQDN=$$(az containerapp show \
-		-n ca-graph-mcp-gw-$(USER_SLUG) \
+		-n ca-graph-mcp-gw-$(AZURE_ENVIRONMENT)-$(USER_SLUG) \
 		-g $(AZURE_RESOURCE_GROUP) \
 		--query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null) || true; \
 	if [ -z "$$GW_FQDN" ]; then \
-		echo "ERROR: MCP gateway ca-graph-mcp-gw-$(USER_SLUG) not found in $(AZURE_RESOURCE_GROUP)."; \
+		echo "ERROR: MCP gateway ca-graph-mcp-gw-$(AZURE_ENVIRONMENT)-$(USER_SLUG) not found in $(AZURE_RESOURCE_GROUP)."; \
 		echo "Deploy the gateway first, then re-run this target."; \
 		exit 1; \
 	fi; \
@@ -276,19 +284,23 @@ azure-deploy-user: tf-init-user tf-workspace-user ## Deploy an isolated Containe
 	sleep 15; \
 	echo ""; \
 	echo "--- Running Terraform apply ---"; \
+	export TF_VAR_compass_base_url="$(COMPASS_BASE_URL)"; \
 	export TF_VAR_compass_api_key="$(COMPASS_API_KEY)"; \
 	export TF_VAR_openclaw_gateway_auth_token="$(OPENCLAW_GATEWAY_AUTH_TOKEN)"; \
 	export TF_VAR_signal_user_phone="$(SIGNAL_USER_PHONE)"; \
 	export TF_VAR_signal_cli_url="$(SIGNAL_CLI_URL_TF)"; \
 	export TF_VAR_signal_proxy_auth_token="$(SIGNAL_PROXY_AUTH_TOKEN_TF)"; \
-	export TF_VAR_tf_state_resource_group="$(TF_STATE_RG)"; \
-	export TF_VAR_tf_state_storage_account="$(TF_STATE_SA)"; \
 	terraform -chdir=$(TF_USER_DIR) apply \
 		-var="user_slug=$(USER_SLUG)" \
 		-var="environment=$(AZURE_ENVIRONMENT)" \
 		-var="location=$(AZURE_LOCATION)" \
 		-var="image_ref=$(IMAGE_REF)" \
 		-var="graph_mcp_url=$$GRAPH_MCP_URL" \
+		-var="resource_group_name=$(AZURE_RESOURCE_GROUP)" \
+		-var="key_vault_name=$(AZURE_KEY_VAULT_NAME)" \
+		-var="acr_name=$(AZURE_ACR_NAME)" \
+		-var="cae_name=$(AZURE_CONTAINERAPPS_ENV)" \
+		-var="cae_nfs_storage_name=$(CAE_NFS_STORAGE_NAME)" \
 		$(SIGNAL_VARS) ; \
 	rc=$$?; \
 	echo ""; \
@@ -306,20 +318,20 @@ azure-deploy-user: tf-init-user tf-workspace-user ## Deploy an isolated Containe
 	fi; \
 	echo ""; \
 	echo "============================================="; \
-	echo " User app deployed: oc-$(USER_SLUG)"; \
+	echo " User app deployed: ca-openclaw-$(AZURE_ENVIRONMENT)-$(USER_SLUG)"; \
 	echo "============================================="; \
 	echo "GRAPH_MCP_URL : $$GRAPH_MCP_URL"; \
 	echo "Image         : $(IMAGE_REF)"; \
 	echo ""; \
 	echo "--- Container status ---"; \
-	az containerapp show -n ca-openclaw-$(USER_SLUG) -g $(AZURE_RESOURCE_GROUP) \
+	az containerapp show -n ca-openclaw-$(AZURE_ENVIRONMENT)-$(USER_SLUG) -g $(AZURE_RESOURCE_GROUP) \
 		--query "{name:name, status:properties.provisioningState, revision:properties.latestRevisionName, fqdn:properties.configuration.ingress.fqdn}" \
 		-o table 2>/dev/null || echo "  (could not query container status)"
 
 azure-deploy-user-plan: tf-init-user tf-workspace-user ## Plan a user deployment (dry run)
 	$(call check_user_vars)
-	$(eval SIGNAL_CLI_URL_TF := $(shell terraform -chdir=$(TF_SHARED_DIR) output -json signal_cli_url 2>/dev/null | tr -d '"' || echo ""))
-	$(eval SIGNAL_PROXY_AUTH_TOKEN_TF := $(shell terraform -chdir=$(TF_SHARED_DIR) output -json signal_proxy_auth_token 2>/dev/null | tr -d '"' || echo ""))
+	$(eval SIGNAL_CLI_URL_TF := $(or $(SIGNAL_CLI_URL),$(shell terraform -chdir=$(TF_SHARED_DIR) output -json signal_cli_url 2>/dev/null | tr -d '"' || echo "")))
+	$(eval SIGNAL_PROXY_AUTH_TOKEN_TF := $(or $(SIGNAL_PROXY_AUTH_TOKEN),$(shell terraform -chdir=$(TF_SHARED_DIR) output -json signal_proxy_auth_token 2>/dev/null | tr -d '"' || echo "")))
 	$(eval SIGNAL_VARS := )
 	$(if $(and $(SIGNAL_CLI_URL_TF),$(SIGNAL_BOT_NUMBER),$(SIGNAL_USER_PHONE)), \
 		$(eval SIGNAL_VARS := -var="signal_bot_number=$(SIGNAL_BOT_NUMBER)") \
@@ -328,11 +340,11 @@ azure-deploy-user-plan: tf-init-user tf-workspace-user ## Plan a user deployment
 	@set -e; \
 	echo "--- Discovering GRAPH_MCP_URL for $(USER_SLUG) ---"; \
 	GW_FQDN=$$(az containerapp show \
-		-n ca-graph-mcp-gw-$(USER_SLUG) \
+		-n ca-graph-mcp-gw-$(AZURE_ENVIRONMENT)-$(USER_SLUG) \
 		-g $(AZURE_RESOURCE_GROUP) \
 		--query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null) || true; \
 	if [ -z "$$GW_FQDN" ]; then \
-		echo "ERROR: MCP gateway ca-graph-mcp-gw-$(USER_SLUG) not found in $(AZURE_RESOURCE_GROUP)."; \
+		echo "ERROR: MCP gateway ca-graph-mcp-gw-$(AZURE_ENVIRONMENT)-$(USER_SLUG) not found in $(AZURE_RESOURCE_GROUP)."; \
 		echo "Deploy the gateway first, then re-run this target."; \
 		exit 1; \
 	fi; \
@@ -351,19 +363,23 @@ azure-deploy-user-plan: tf-init-user tf-workspace-user ## Plan a user deployment
 	sleep 15; \
 	echo ""; \
 	echo "--- Running Terraform plan ---"; \
+	export TF_VAR_compass_base_url="$(COMPASS_BASE_URL)"; \
 	export TF_VAR_compass_api_key="$(COMPASS_API_KEY)"; \
 	export TF_VAR_openclaw_gateway_auth_token="$(OPENCLAW_GATEWAY_AUTH_TOKEN)"; \
 	export TF_VAR_signal_user_phone="$(SIGNAL_USER_PHONE)"; \
 	export TF_VAR_signal_cli_url="$(SIGNAL_CLI_URL_TF)"; \
 	export TF_VAR_signal_proxy_auth_token="$(SIGNAL_PROXY_AUTH_TOKEN_TF)"; \
-	export TF_VAR_tf_state_resource_group="$(TF_STATE_RG)"; \
-	export TF_VAR_tf_state_storage_account="$(TF_STATE_SA)"; \
 	terraform -chdir=$(TF_USER_DIR) plan \
 		-var="user_slug=$(USER_SLUG)" \
 		-var="environment=$(AZURE_ENVIRONMENT)" \
 		-var="location=$(AZURE_LOCATION)" \
 		-var="image_ref=$(IMAGE_REF)" \
 		-var="graph_mcp_url=$$GRAPH_MCP_URL" \
+		-var="resource_group_name=$(AZURE_RESOURCE_GROUP)" \
+		-var="key_vault_name=$(AZURE_KEY_VAULT_NAME)" \
+		-var="acr_name=$(AZURE_ACR_NAME)" \
+		-var="cae_name=$(AZURE_CONTAINERAPPS_ENV)" \
+		-var="cae_nfs_storage_name=$(CAE_NFS_STORAGE_NAME)" \
 		$(SIGNAL_VARS) ; \
 	rc=$$?; \
 	echo ""; \
@@ -383,7 +399,7 @@ azure-destroy-user: tf-init-user tf-workspace-user ## Destroy a user's Container
 	$(if $(USER_SLUG),,$(error USER_SLUG is required))
 	@set -e; \
 	echo "============================================="; \
-	echo " Destroying user app: oc-$(USER_SLUG)"; \
+	echo " Destroying user app: ca-openclaw-$(AZURE_ENVIRONMENT)-$(USER_SLUG)"; \
 	echo " Environment: $(AZURE_ENVIRONMENT)"; \
 	echo "============================================="; \
 	echo ""; \
@@ -401,14 +417,17 @@ azure-destroy-user: tf-init-user tf-workspace-user ## Destroy a user's Container
 	echo "--- Running Terraform destroy ---"; \
 	export TF_VAR_compass_api_key="placeholder"; \
 	export TF_VAR_openclaw_gateway_auth_token="placeholder"; \
-	export TF_VAR_tf_state_resource_group="$(TF_STATE_RG)"; \
-	export TF_VAR_tf_state_storage_account="$(TF_STATE_SA)"; \
 	terraform -chdir=$(TF_USER_DIR) destroy \
 		-var="user_slug=$(USER_SLUG)" \
 		-var="environment=$(AZURE_ENVIRONMENT)" \
 		-var="location=$(AZURE_LOCATION)" \
 		-var="image_ref=placeholder" \
-		-var="graph_mcp_url=placeholder" ; \
+		-var="graph_mcp_url=placeholder" \
+		-var="resource_group_name=$(AZURE_RESOURCE_GROUP)" \
+		-var="key_vault_name=$(AZURE_KEY_VAULT_NAME)" \
+		-var="acr_name=$(AZURE_ACR_NAME)" \
+		-var="cae_name=$(AZURE_CONTAINERAPPS_ENV)" \
+		-var="cae_nfs_storage_name=$(CAE_NFS_STORAGE_NAME)" ; \
 	rc=$$?; \
 	echo ""; \
 	echo "--- Closing firewalls ---"; \
@@ -424,7 +443,7 @@ azure-destroy-user: tf-init-user tf-workspace-user ## Destroy a user's Container
 	fi; \
 	echo ""; \
 	echo "============================================="; \
-	echo " User app destroyed: oc-$(USER_SLUG)"; \
+	echo " User app destroyed: ca-openclaw-$(AZURE_ENVIRONMENT)-$(USER_SLUG)"; \
 	echo "============================================="; \
 	echo "Note: NFS data at /data/$(USER_SLUG)/ is preserved."
 

@@ -14,11 +14,14 @@ if [[ -n "${USER_SLUG:-}" ]]; then
   DATA_ROOT="/app/data/${USER_SLUG}"
 
   # Validate required environment variables (only on Azure, not local dev)
-  : "${SIGNAL_BOT_NUMBER:?SIGNAL_BOT_NUMBER is required}"
-  : "${SIGNAL_USER_PHONE:?SIGNAL_USER_PHONE is required}"
   : "${COMPASS_API_KEY:?COMPASS_API_KEY is required}"
 
-  # Build the full Signal HTTP URL from components.
+  # Signal is optional — warn if partially configured
+  if [[ -n "${SIGNAL_BOT_NUMBER:-}" && -z "${SIGNAL_USER_PHONE:-}" ]]; then
+    echo "WARNING: SIGNAL_BOT_NUMBER is set but SIGNAL_USER_PHONE is missing — Signal channel will be disabled" >&2
+  fi
+
+  # Build the full Signal HTTP URL from components (only if all pieces present).
   # SIGNAL_CLI_URL = base URL (e.g. http://host)
   # SIGNAL_PROXY_AUTH_TOKEN = optional auth token (embedded as path segment)
   # Result: http://host/user/+PHONE/TOKEN  (client appends /api/v1/events etc.)
@@ -48,15 +51,58 @@ if [[ ! -f "${OPENCLAW_CONFIG_FILE}" ]]; then
   else
     # Fallback: manual sed substitution for key variables
     sed \
+      -e "s|\${COMPASS_BASE_URL}|${COMPASS_BASE_URL:-https://api.core42.ai/v1}|g" \
       -e "s|\${COMPASS_API_KEY}|${COMPASS_API_KEY}|g" \
-      -e "s|\${OPENCLAW_GATEWAY_AUTH_TOKEN}|${OPENCLAW_GATEWAY_AUTH_TOKEN}|g" \
-      -e "s|\${SIGNAL_BOT_NUMBER}|${SIGNAL_BOT_NUMBER}|g" \
+      -e "s|\${OPENCLAW_GATEWAY_AUTH_TOKEN}|${OPENCLAW_GATEWAY_AUTH_TOKEN:-}|g" \
+      -e "s|\${SIGNAL_BOT_NUMBER}|${SIGNAL_BOT_NUMBER:-}|g" \
       -e "s|\${SIGNAL_HTTP_URL}|${SIGNAL_HTTP_URL:-}|g" \
-      -e "s|\${SIGNAL_USER_PHONE}|${SIGNAL_USER_PHONE}|g" \
+      -e "s|\${SIGNAL_USER_PHONE}|${SIGNAL_USER_PHONE:-}|g" \
       -e "s|\${OPENCLAW_STATE_DIR}|${OPENCLAW_STATE_DIR}|g" \
       /app/config/openclaw.json.example > "${OPENCLAW_CONFIG_FILE}"
   fi
   chmod 600 "${OPENCLAW_CONFIG_FILE}"
+
+  # If Signal is not configured, disable the channel in the generated config
+  if [[ -z "${SIGNAL_BOT_NUMBER:-}" || -z "${SIGNAL_USER_PHONE:-}" ]]; then
+    python3 -c "
+import json, os
+cfg_path = os.environ['OPENCLAW_CONFIG_FILE']
+with open(cfg_path) as f:
+    cfg = json.load(f)
+ch = cfg.get('channels', {}).get('signal')
+if ch:
+    ch['enabled'] = False
+    ch['autoStart'] = False
+    with open(cfg_path, 'w') as f:
+        json.dump(cfg, f, indent=2)
+    print(f'Signal not configured — disabled signal channel in {cfg_path}')
+" 2>/dev/null || echo "WARNING: failed to disable signal channel (python3 unavailable or JSON parse error)"
+  fi
+fi
+
+# Always patch the Compass provider baseUrl and apiKey in openclaw.json on every boot.
+# This ensures env var changes propagate to existing users without requiring a config wipe.
+if [[ -f "${OPENCLAW_CONFIG_FILE}" ]]; then
+  python3 -c "
+import json, os
+cfg_path = os.environ['OPENCLAW_CONFIG_FILE']
+base_url = os.environ.get('COMPASS_BASE_URL', 'https://api.core42.ai/v1')
+api_key = os.environ.get('COMPASS_API_KEY', '')
+with open(cfg_path) as f:
+    cfg = json.load(f)
+compass = cfg.get('models', {}).get('providers', {}).get('compass', {})
+changed = False
+if compass and compass.get('baseUrl') != base_url:
+    compass['baseUrl'] = base_url
+    changed = True
+if compass and api_key and compass.get('apiKey') != api_key:
+    compass['apiKey'] = api_key
+    changed = True
+if changed:
+    with open(cfg_path, 'w') as f:
+        json.dump(cfg, f, indent=2)
+    print(f'Patched Compass provider (baseUrl={base_url}) in {cfg_path}')
+" 2>/dev/null || echo "WARNING: failed to patch Compass provider config"
 fi
 
 # Always patch the signal httpUrl in openclaw.json on every boot.
@@ -72,10 +118,11 @@ with open(cfg_path) as f:
 ch = cfg.get('channels', {}).get('signal', {})
 if ch:
     ch['httpUrl'] = url
+    ch['enabled'] = True
     ch['autoStart'] = True
     with open(cfg_path, 'w') as f:
         json.dump(cfg, f, indent=2)
-    print(f'Patched signal httpUrl in {cfg_path}')
+    print(f'Patched signal httpUrl and re-enabled channel in {cfg_path}')
 " 2>/dev/null || echo "WARNING: failed to patch signal httpUrl (python3 unavailable or JSON parse error)"
 fi
 

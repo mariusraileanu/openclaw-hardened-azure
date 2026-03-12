@@ -3,7 +3,7 @@
     "mode": "merge",
     "providers": {
       "compass": {
-        "baseUrl": "https://your-llm-provider.example.com/v1",
+        "baseUrl": "${COMPASS_BASE_URL}",
         "apiKey": "${COMPASS_API_KEY}",
         "api": "openai-completions",
         "models": [

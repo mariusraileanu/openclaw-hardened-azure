@@ -20,15 +20,16 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# Load .env if present (same pattern as Makefile / rebuild.sh)
+# Load per-environment env file (same pattern as Makefile / rebuild.sh)
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-if [[ -f "${REPO_ROOT}/.env" ]]; then
+_ENV="${AZURE_ENVIRONMENT:-dev}"
+if [[ -f "${REPO_ROOT}/.env.azure.${_ENV}" ]]; then
   set -a
-  # shellcheck disable=SC1091
-  source "${REPO_ROOT}/.env"
+  # shellcheck disable=SC1090
+  source "${REPO_ROOT}/.env.azure.${_ENV}"
   set +a
 fi
 
@@ -87,9 +88,17 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 2. Storage Account
+# 2. Storage Account (org policy: no shared keys, no public network access)
 # ---------------------------------------------------------------------------
 step "Storage Account: ${SA_NAME}"
+
+# Detect deployer's outbound IP for firewall rules
+DEPLOYER_IP=$(curl -s --connect-timeout 5 ifconfig.me 2>/dev/null || curl -s --connect-timeout 5 https://api.ipify.org 2>/dev/null || echo "")
+if [[ -z "${DEPLOYER_IP}" ]]; then
+  fail "Could not detect deployer IP — needed for storage firewall rule"
+fi
+echo "Deployer IP: ${DEPLOYER_IP}"
+
 if az storage account show --name "${SA_NAME}" --resource-group "${RG_NAME}" >/dev/null 2>&1; then
   skip "Storage account already exists"
 else
@@ -102,9 +111,57 @@ else
     --min-tls-version TLS1_2 \
     --https-only true \
     --allow-blob-public-access false \
+    --allow-shared-key-access false \
+    --public-network-access Disabled \
     --tags environment="${ENV}" project=openclaw managed_by=bootstrap purpose=terraform-state \
     --output none
   ok "Storage account created"
+fi
+
+# Ensure deployer IP is allowed through the firewall
+step "Storage firewall: allow deployer IP"
+az storage account network-rule add \
+  --account-name "${SA_NAME}" \
+  --resource-group "${RG_NAME}" \
+  --ip-address "${DEPLOYER_IP}" \
+  --output none 2>/dev/null || true
+# Enable default deny + allow Azure services
+az storage account update \
+  --name "${SA_NAME}" \
+  --resource-group "${RG_NAME}" \
+  --default-action Deny \
+  --bypass AzureServices \
+  --public-network-access Enabled \
+  --output none
+ok "Firewall: default deny + deployer IP allowed"
+
+# Grant current user Storage Blob Data Contributor on this account (for Azure AD auth)
+step "RBAC: Storage Blob Data Contributor for deployer"
+DEPLOYER_OID=$(az ad signed-in-user show --query id -o tsv 2>/dev/null || echo "")
+SA_RESOURCE_ID=$(az storage account show --name "${SA_NAME}" --resource-group "${RG_NAME}" --query id -o tsv)
+
+if [[ -n "${DEPLOYER_OID}" ]]; then
+  EXISTING_ROLE=$(az role assignment list \
+    --assignee "${DEPLOYER_OID}" \
+    --scope "${SA_RESOURCE_ID}" \
+    --role "Storage Blob Data Contributor" \
+    --query "[0].id" -o tsv 2>/dev/null || echo "")
+  if [[ -n "${EXISTING_ROLE}" ]]; then
+    skip "Storage Blob Data Contributor already assigned"
+  else
+    az role assignment create \
+      --assignee-object-id "${DEPLOYER_OID}" \
+      --assignee-principal-type User \
+      --role "Storage Blob Data Contributor" \
+      --scope "${SA_RESOURCE_ID}" \
+      --output none
+    ok "Storage Blob Data Contributor assigned to deployer"
+    echo "Waiting 30s for RBAC propagation..."
+    sleep 30
+  fi
+else
+  echo "WARNING: Could not determine deployer Object ID — RBAC assignment skipped"
+  echo "You may need to manually assign Storage Blob Data Contributor on ${SA_NAME}"
 fi
 
 # Enable blob versioning (acts as state history / backup)
@@ -126,26 +183,20 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Blob Container
+# 3. Blob Container (using Azure AD auth — no shared keys)
 # ---------------------------------------------------------------------------
 step "Blob Container: ${CONTAINER_NAME}"
-
-# Use storage account key for container creation (avoids RBAC timing issues)
-SA_KEY=$(az storage account keys list \
-  --account-name "${SA_NAME}" \
-  --resource-group "${RG_NAME}" \
-  --query "[0].value" -o tsv)
 
 if az storage container show \
     --name "${CONTAINER_NAME}" \
     --account-name "${SA_NAME}" \
-    --account-key "${SA_KEY}" >/dev/null 2>&1; then
+    --auth-mode login >/dev/null 2>&1; then
   skip "Blob container already exists"
 else
   az storage container create \
     --name "${CONTAINER_NAME}" \
     --account-name "${SA_NAME}" \
-    --account-key "${SA_KEY}" \
+    --auth-mode login \
     --output none
   ok "Blob container created"
 fi

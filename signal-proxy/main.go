@@ -32,6 +32,11 @@ var (
 	mu          sync.RWMutex
 	subscribers = make(map[string][]*subscriber) // phone -> active subscribers
 	upstreamOK  atomic.Bool
+
+	// uuidToPhone maps Signal ACI UUIDs to phone numbers.
+	// Populated by periodic listContacts calls to signal-cli.
+	uuidMu      sync.RWMutex
+	uuidToPhone = make(map[string]string) // UUID -> "+1234567890"
 )
 
 // maskPhone redacts the middle digits of a phone number for log safety.
@@ -56,6 +61,284 @@ func sanitizeLog(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// resolveUUID looks up a phone number for a UUID from the cache.
+// Returns "" if the UUID is not known.
+func resolveUUID(uuid string) string {
+	uuidMu.RLock()
+	defer uuidMu.RUnlock()
+	return uuidToPhone[strings.ToLower(uuid)]
+}
+
+// refreshContacts builds the UUID→phone cache using multiple strategies:
+//  1. listContacts — returns explicitly saved contacts with UUID+phone
+//  2. getUserStatus — resolves UUID for each currently-connected subscriber phone
+//  3. SIGNAL_KNOWN_PHONES env var — comma-separated phone numbers to resolve
+func refreshContacts(upstreamURL string) {
+	rpcURL := upstreamURL + "/api/v1/rpc"
+	added := 0
+
+	// Strategy 1: listContacts (may return empty if no contacts explicitly saved)
+	added += refreshFromListContacts(rpcURL)
+
+	// Strategy 2: resolve each active subscriber's phone number via getUserStatus
+	mu.RLock()
+	phones := make(map[string]bool)
+	for phone := range subscribers {
+		phones[phone] = true
+	}
+	mu.RUnlock()
+
+	// Strategy 3: also resolve phones from SIGNAL_KNOWN_PHONES env var
+	if knownPhones := os.Getenv("SIGNAL_KNOWN_PHONES"); knownPhones != "" {
+		for _, p := range strings.Split(knownPhones, ",") {
+			p = strings.TrimSpace(p)
+			if strings.HasPrefix(p, "+") {
+				phones[p] = true
+			}
+		}
+	}
+
+	for phone := range phones {
+		if resolvePhoneToUUID(rpcURL, phone) {
+			added++
+		}
+	}
+
+	uuidMu.RLock()
+	total := len(uuidToPhone)
+	uuidMu.RUnlock()
+	log.Printf("refreshContacts: added %d new mappings, total cache size: %d", added, total)
+}
+
+// refreshFromListContacts calls signal-cli's listContacts and caches UUID→phone pairs.
+func refreshFromListContacts(rpcURL string) int {
+	payload := []byte(`{"jsonrpc":"2.0","id":1,"method":"listContacts"}`)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rpcURL, bytes.NewReader(payload))
+	if err != nil {
+		log.Printf("refreshFromListContacts: failed to create request: %v", err)
+		return 0
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("refreshFromListContacts: RPC call failed: %v", err)
+		return 0
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+	if err != nil {
+		log.Printf("refreshFromListContacts: failed to read response: %v", err)
+		return 0
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("refreshFromListContacts: unexpected status %d: %s", resp.StatusCode, string(body[:min(len(body), 200)]))
+		return 0
+	}
+
+	var rpcResp struct {
+		Result json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(body, &rpcResp); err != nil {
+		log.Printf("refreshFromListContacts: failed to parse RPC response: %v", err)
+		return 0
+	}
+
+	var contacts []struct {
+		Number string `json:"number"`
+		UUID   string `json:"uuid"`
+	}
+	if err := json.Unmarshal(rpcResp.Result, &contacts); err != nil {
+		log.Printf("refreshFromListContacts: failed to parse contacts: %v (raw: %s)", err, string(rpcResp.Result[:min(len(rpcResp.Result), 300)]))
+		return 0
+	}
+
+	uuidMu.Lock()
+	added := 0
+	for _, c := range contacts {
+		if c.UUID != "" && c.Number != "" {
+			key := strings.ToLower(c.UUID)
+			if _, exists := uuidToPhone[key]; !exists {
+				uuidToPhone[key] = c.Number
+				added++
+			}
+		}
+	}
+	uuidMu.Unlock()
+
+	if len(contacts) > 0 {
+		log.Printf("refreshFromListContacts: cached %d new from %d contacts", added, len(contacts))
+	}
+	return added
+}
+
+// resolvePhoneToUUID calls signal-cli's getUserStatus RPC to get the UUID for a phone number.
+// Returns true if a new mapping was added to the cache.
+func resolvePhoneToUUID(rpcURL string, phone string) bool {
+	// getUserStatus expects: {"jsonrpc":"2.0","id":2,"method":"getUserStatus","params":{"recipient":["+xxx"]}}
+	type rpcParams struct {
+		Recipient []string `json:"recipient"`
+	}
+	type rpcReq struct {
+		Jsonrpc string    `json:"jsonrpc"`
+		ID      int       `json:"id"`
+		Method  string    `json:"method"`
+		Params  rpcParams `json:"params"`
+	}
+
+	reqBody, _ := json.Marshal(rpcReq{
+		Jsonrpc: "2.0",
+		ID:      2,
+		Method:  "getUserStatus",
+		Params:  rpcParams{Recipient: []string{phone}},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rpcURL, bytes.NewReader(reqBody))
+	if err != nil {
+		log.Printf("resolvePhoneToUUID(%s): failed to create request: %v", maskPhone(phone), err)
+		return false
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("resolvePhoneToUUID(%s): RPC call failed: %v", maskPhone(phone), err)
+		return false
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if err != nil {
+		log.Printf("resolvePhoneToUUID(%s): failed to read response: %v", maskPhone(phone), err)
+		return false
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("resolvePhoneToUUID(%s): unexpected status %d: %s", maskPhone(phone), resp.StatusCode, string(body[:min(len(body), 200)]))
+		return false
+	}
+
+	// Parse the JSON-RPC response. getUserStatus returns:
+	// {"jsonrpc":"2.0","id":2,"result":[{"number":"+xxx","uuid":"xxx","isRegistered":true}]}
+	var rpcResp struct {
+		Result json.RawMessage `json:"result"`
+		Error  *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &rpcResp); err != nil {
+		log.Printf("resolvePhoneToUUID(%s): failed to parse response: %v (raw: %s)", maskPhone(phone), err, string(body[:min(len(body), 200)]))
+		return false
+	}
+
+	if rpcResp.Error != nil {
+		log.Printf("resolvePhoneToUUID(%s): RPC error: %s", maskPhone(phone), rpcResp.Error.Message)
+		return false
+	}
+
+	// Try parsing as array of user statuses
+	var statuses []struct {
+		Number string `json:"number"`
+		UUID   string `json:"uuid"`
+	}
+	if err := json.Unmarshal(rpcResp.Result, &statuses); err != nil {
+		log.Printf("resolvePhoneToUUID(%s): failed to parse result: %v (raw: %s)", maskPhone(phone), err, string(rpcResp.Result[:min(len(rpcResp.Result), 200)]))
+		return false
+	}
+
+	uuidMu.Lock()
+	defer uuidMu.Unlock()
+	newMapping := false
+	for _, s := range statuses {
+		if s.UUID != "" && s.Number != "" {
+			key := strings.ToLower(s.UUID)
+			if _, exists := uuidToPhone[key]; !exists {
+				uuidToPhone[key] = s.Number
+				newMapping = true
+				log.Printf("resolvePhoneToUUID: mapped %s → %s", maskPhone(s.UUID), maskPhone(s.Number))
+			}
+		}
+	}
+	return newMapping
+}
+
+// startContactRefresher periodically refreshes the UUID→phone cache.
+func startContactRefresher(upstreamURL string) {
+	// Initial fetch after a short delay (give signal-cli time to start)
+	time.Sleep(5 * time.Second)
+	refreshContacts(upstreamURL)
+
+	// Refresh every 5 minutes
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		refreshContacts(upstreamURL)
+	}
+}
+
+// enrichSourceNumber patches the JSON event data to include a resolved phone number
+// when sourceNumber is null/empty but source (UUID) is present and we know the mapping.
+// Returns the (possibly modified) data and the resolved sourceNumber.
+func enrichSourceNumber(data []byte) ([]byte, bool) {
+	// Quick check: if sourceNumber is already a phone number, no enrichment needed
+	if bytes.Contains(data, []byte(`"sourceNumber":"+`)) {
+		return data, false
+	}
+
+	// Check if sourceNumber is null or absent
+	if !bytes.Contains(data, []byte(`"sourceNumber":null`)) && !bytes.Contains(data, []byte(`"sourceNumber":""`)) {
+		return data, false
+	}
+
+	// Extract the source UUID from the envelope
+	var envelope struct {
+		Envelope struct {
+			Source     string `json:"source"`
+			SourceUuid string `json:"sourceUuid"`
+		} `json:"envelope"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return data, false
+	}
+
+	uuid := envelope.Envelope.Source
+	if uuid == "" {
+		uuid = envelope.Envelope.SourceUuid
+	}
+	if uuid == "" {
+		return data, false
+	}
+
+	phone := resolveUUID(uuid)
+	if phone == "" {
+		return data, false
+	}
+
+	// Patch the JSON: replace "sourceNumber":null with "sourceNumber":"+xxx"
+	phoneJSON, _ := json.Marshal(phone)
+	patched := bytes.Replace(data, []byte(`"sourceNumber":null`), []byte(`"sourceNumber":`+string(phoneJSON)), 1)
+	if bytes.Equal(patched, data) {
+		// Try empty string variant
+		patched = bytes.Replace(data, []byte(`"sourceNumber":""`), []byte(`"sourceNumber":`+string(phoneJSON)), 1)
+	}
+
+	if !bytes.Equal(patched, data) {
+		log.Printf("enrichSourceNumber: patched sourceNumber from null to %s for UUID %s", maskPhone(phone), maskPhone(uuid))
+		return patched, true
+	}
+
+	return data, false
 }
 
 // authMiddleware validates a bearer token on every request except health checks.
@@ -206,6 +489,9 @@ func main() {
 
 	// Start upstream SSE reader
 	go connectUpstream(upstreamURL)
+
+	// Start periodic UUID→phone cache refresher (calls signal-cli listContacts)
+	go startContactRefresher(upstreamURL)
 
 	mux := http.NewServeMux()
 
@@ -540,9 +826,24 @@ func readUpstreamSSE(sseURL string) error {
 }
 
 // dispatchEvent extracts sourceNumber from a signal-cli SSE event and fans out to matching subscribers.
+//
+// Routing strategy:
+//  1. If sourceNumber is a phone number (starts with "+"), route to subscribers registered for that phone.
+//  2. If sourceNumber is a UUID/ACI (signal-cli 0.14.x may use UUIDs instead of phone numbers when the
+//     sender hasn't shared their number or the contact hasn't been resolved yet), broadcast to ALL subscribers.
+//     The downstream user container handles its own filtering.
+//  3. If sourceNumber is empty, drop the event (typing indicators, delivery receipts without a source).
 func dispatchEvent(eventType string, data []byte) {
+	// Enrich sourceNumber before routing: replace null/empty sourceNumber with
+	// the resolved phone number from UUID→phone cache, so downstream consumers
+	// (whose allowFrom filter matches on phone numbers) can process the event.
+	enrichedData, wasEnriched := enrichSourceNumber(data)
+	if wasEnriched {
+		data = enrichedData
+	}
+
 	sourceNumber := extractSourceNumber(data)
-	log.Printf("dispatch: eventType=%q sourceNumber=%s dataLen=%d", eventType, maskPhone(sourceNumber), len(data))
+	log.Printf("dispatch: eventType=%q sourceNumber=%s dataLen=%d enriched=%v", eventType, maskPhone(sourceNumber), len(data), wasEnriched)
 
 	// Build the raw SSE frame to send downstream
 	var frame bytes.Buffer
@@ -559,20 +860,41 @@ func dispatchEvent(eventType string, data []byte) {
 		return
 	}
 
+	// Determine target subscribers.
+	// If sourceNumber is a phone (starts with "+"), try exact match first.
+	// If it's a UUID/ACI or no exact match exists, broadcast to all subscribers.
+	isPhone := strings.HasPrefix(sourceNumber, "+")
+
 	mu.RLock()
-	subs, exists := subscribers[sourceNumber]
-	if !exists {
-		mu.RUnlock()
-		mu.RLock()
-		knownCount := len(subscribers)
-		mu.RUnlock()
-		log.Printf("no subscriber for source=%s, known_count=%d, dropping event", maskPhone(sourceNumber), knownCount)
+	var subsCopy []*subscriber
+
+	if isPhone {
+		if subs, exists := subscribers[sourceNumber]; exists {
+			subsCopy = make([]*subscriber, len(subs))
+			copy(subsCopy, subs)
+		}
+	}
+
+	// Broadcast: sourceNumber is a UUID, or no subscriber matched the phone number.
+	// In single-bot deployments (and even multi-tenant), the user container's signal
+	// provider handles its own message filtering, so broadcasting is safe.
+	if len(subsCopy) == 0 {
+		for _, subs := range subscribers {
+			for _, s := range subs {
+				subsCopy = append(subsCopy, s)
+			}
+		}
+		if len(subsCopy) > 0 {
+			log.Printf("dispatch: broadcasting to %d subscriber(s) (source=%s is %s)",
+				len(subsCopy), maskPhone(sourceNumber), map[bool]string{true: "unmatched phone", false: "UUID/ACI"}[isPhone])
+		}
+	}
+	mu.RUnlock()
+
+	if len(subsCopy) == 0 {
+		log.Printf("no subscribers at all, dropping event (source=%s)", maskPhone(sourceNumber))
 		return
 	}
-	// Copy slice under read lock to avoid holding lock during channel sends
-	subsCopy := make([]*subscriber, len(subs))
-	copy(subsCopy, subs)
-	mu.RUnlock()
 
 	for _, sub := range subsCopy {
 		select {
@@ -587,10 +909,19 @@ func dispatchEvent(eventType string, data []byte) {
 }
 
 // extractSourceNumber parses a signal-cli SSE event to get the sender's phone number.
-// signal-cli daemon SSE format: {"envelope":{"sourceNumber":"+xxx",...},"account":"+bot",...}
+// signal-cli daemon SSE format: {"envelope":{"sourceNumber":"+xxx","source":"UUID",...},"account":"+bot",...}
 // JSON-RPC notification format: {"jsonrpc":"2.0","method":"receive","params":{"envelope":{"sourceNumber":"+xxx",...},...}}
+//
+// In signal-cli 0.14.x, sourceNumber may be absent for contacts whose phone number hasn't
+// been resolved. In that case, the "source" field contains the ACI UUID. This function
+// returns whatever identifier is available — the caller handles phone vs UUID routing.
 func extractSourceNumber(data []byte) string {
-	log.Printf("extractSourceNumber: dataLen=%d", len(data))
+	// Truncate data for logging to avoid flooding logs with large messages
+	preview := string(data)
+	if len(preview) > 300 {
+		preview = preview[:300] + "..."
+	}
+	log.Printf("extractSourceNumber: dataLen=%d preview=%s", len(data), sanitizeLog(preview))
 
 	// First try: signal-cli daemon SSE format (direct envelope at top level)
 	var directMsg struct {
@@ -601,6 +932,7 @@ func extractSourceNumber(data []byte) string {
 		Account string `json:"account"`
 	}
 	if err := json.Unmarshal(data, &directMsg); err == nil {
+		// Prefer phone number over UUID
 		if num := directMsg.Envelope.SourceNumber; num != "" {
 			return num
 		}
@@ -614,10 +946,12 @@ func extractSourceNumber(data []byte) string {
 		Params struct {
 			Envelope struct {
 				SourceNumber string `json:"sourceNumber"`
+				Source       string `json:"source"`
 			} `json:"envelope"`
 			Result struct {
 				Envelope struct {
 					SourceNumber string `json:"sourceNumber"`
+					Source       string `json:"source"`
 				} `json:"envelope"`
 			} `json:"result"`
 		} `json:"params"`
@@ -631,5 +965,11 @@ func extractSourceNumber(data []byte) string {
 	if num := rpcMsg.Params.Envelope.SourceNumber; num != "" {
 		return num
 	}
-	return rpcMsg.Params.Result.Envelope.SourceNumber
+	if num := rpcMsg.Params.Envelope.Source; num != "" {
+		return num
+	}
+	if num := rpcMsg.Params.Result.Envelope.SourceNumber; num != "" {
+		return num
+	}
+	return rpcMsg.Params.Result.Envelope.Source
 }

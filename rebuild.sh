@@ -25,11 +25,12 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# Load .env
+# Load per-environment env file
 # ---------------------------------------------------------------------------
-if [[ -f .env ]]; then
+AZURE_ENVIRONMENT="${AZURE_ENVIRONMENT:-dev}"
+if [[ -f ".env.azure.${AZURE_ENVIRONMENT}" ]]; then
   set -a
-  source .env
+  source ".env.azure.${AZURE_ENVIRONMENT}"
   set +a
 fi
 
@@ -40,15 +41,17 @@ USER_SLUG="${USER_SLUG:-}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 SIGNAL_PROXY_AUTH_TOKEN="${SIGNAL_PROXY_AUTH_TOKEN:-}"
 
-RG_NAME="rg-openclaw-shared-${AZURE_ENVIRONMENT}"
-CAE_NAME="cae-openclaw-shared-${AZURE_ENVIRONMENT}"
-ACR_NAME="openclawshared${AZURE_ENVIRONMENT}acr"
-KV_NAME="kvopenclawshared${AZURE_ENVIRONMENT}"
-NFS_SA_NAME="nfsopenclawshared${AZURE_ENVIRONMENT}"
+# Derived names — overridable via env file for non-standard naming (e.g. prod)
+RG_NAME="${AZURE_RESOURCE_GROUP:-rg-openclaw-shared-${AZURE_ENVIRONMENT}}"
+CAE_NAME="${AZURE_CONTAINERAPPS_ENV:-cae-openclaw-shared-${AZURE_ENVIRONMENT}}"
+ACR_NAME="${AZURE_ACR_NAME:-openclawshared${AZURE_ENVIRONMENT}acr}"
+KV_NAME="${AZURE_KEY_VAULT_NAME:-kvopenclawshared${AZURE_ENVIRONMENT}}"
+NFS_SA_NAME="${NFS_SA_NAME:-nfsopenclawshared${AZURE_ENVIRONMENT}}"
+CAE_NFS_STORAGE_NAME="${CAE_NFS_STORAGE_NAME:-openclaw-nfs}"
 
 # Remote state backend (provisioned by infra/bootstrap-state.sh)
-TF_STATE_RG="rg-openclaw-tfstate-${AZURE_ENVIRONMENT}"
-TF_STATE_SA="tfopenclawstate${AZURE_ENVIRONMENT}"
+TF_STATE_RG="${TF_STATE_RG:-rg-openclaw-tfstate-${AZURE_ENVIRONMENT}}"
+TF_STATE_SA="${TF_STATE_SA:-tfopenclawstate${AZURE_ENVIRONMENT}}"
 TF_BACKEND_ARGS="-backend-config=resource_group_name=${TF_STATE_RG} -backend-config=storage_account_name=${TF_STATE_SA}"
 
 FORCE=false
@@ -166,11 +169,11 @@ nuke() {
 
   step "Step 0b: Backup non-Terraform resources"
   if [[ -n "$USER_SLUG" ]]; then
-    if az containerapp show -n "ca-graph-mcp-gw-${USER_SLUG}" -g "$RG_NAME" >/dev/null 2>&1; then
-      az containerapp show -n "ca-graph-mcp-gw-${USER_SLUG}" -g "$RG_NAME" -o json > /tmp/graph-mcp-backup.json
-      ok "Backed up ca-graph-mcp-gw-${USER_SLUG} to /tmp/graph-mcp-backup.json"
+    if az containerapp show -n "ca-graph-mcp-gw-${AZURE_ENVIRONMENT}-${USER_SLUG}" -g "$RG_NAME" >/dev/null 2>&1; then
+      az containerapp show -n "ca-graph-mcp-gw-${AZURE_ENVIRONMENT}-${USER_SLUG}" -g "$RG_NAME" -o json > /tmp/graph-mcp-backup.json
+      ok "Backed up ca-graph-mcp-gw-${AZURE_ENVIRONMENT}-${USER_SLUG} to /tmp/graph-mcp-backup.json"
     else
-      warn "ca-graph-mcp-gw-${USER_SLUG} not found, nothing to back up"
+      warn "ca-graph-mcp-gw-${AZURE_ENVIRONMENT}-${USER_SLUG} not found, nothing to back up"
     fi
   else
     warn "USER_SLUG not set, skipping graph MCP gateway backup"
@@ -181,8 +184,6 @@ nuke() {
   step "Step 1: Destroy Terraform-managed user container apps"
   if [[ -n "$USER_SLUG" ]]; then
     terraform -chdir=infra/user-app init -input=false ${TF_BACKEND_ARGS} >/dev/null 2>&1 || true
-    export TF_VAR_tf_state_resource_group="${TF_STATE_RG}"
-    export TF_VAR_tf_state_storage_account="${TF_STATE_SA}"
     export TF_VAR_compass_api_key="placeholder"
     export TF_VAR_openclaw_gateway_auth_token="placeholder"
     terraform -chdir=infra/user-app destroy -auto-approve \
@@ -191,6 +192,11 @@ nuke() {
       -var="location=${AZURE_LOCATION}" \
       -var="image_ref=placeholder" \
       -var="graph_mcp_url=placeholder" \
+      -var="resource_group_name=${RG_NAME}" \
+      -var="key_vault_name=${KV_NAME}" \
+      -var="acr_name=${ACR_NAME}" \
+      -var="cae_name=${CAE_NAME}" \
+      -var="cae_nfs_storage_name=${CAE_NFS_STORAGE_NAME}" \
       || warn "User app destroy had issues (may already be gone)"
     ok "User app destroyed"
   else
@@ -199,11 +205,11 @@ nuke() {
 
   step "Step 2: Delete non-Terraform container apps"
   if [[ -n "$USER_SLUG" ]]; then
-    if az containerapp show -n "ca-graph-mcp-gw-${USER_SLUG}" -g "$RG_NAME" >/dev/null 2>&1; then
-      az containerapp delete -n "ca-graph-mcp-gw-${USER_SLUG}" -g "$RG_NAME" --yes
-      ok "ca-graph-mcp-gw-${USER_SLUG} deleted"
+    if az containerapp show -n "ca-graph-mcp-gw-${AZURE_ENVIRONMENT}-${USER_SLUG}" -g "$RG_NAME" >/dev/null 2>&1; then
+      az containerapp delete -n "ca-graph-mcp-gw-${AZURE_ENVIRONMENT}-${USER_SLUG}" -g "$RG_NAME" --yes
+      ok "ca-graph-mcp-gw-${AZURE_ENVIRONMENT}-${USER_SLUG} deleted"
     else
-      warn "ca-graph-mcp-gw-${USER_SLUG} not found, skipping"
+      warn "ca-graph-mcp-gw-${AZURE_ENVIRONMENT}-${USER_SLUG} not found, skipping"
     fi
   else
     warn "USER_SLUG not set, skipping graph MCP gateway deletion"
@@ -330,12 +336,12 @@ rebuild() {
     echo "NOTE: If this is a fresh deployment, run 'make signal-register' to register your bot number."
   else
     acr_firewall_deny
-    warn "SIGNAL_BOT_NUMBER not set in .env — skipping Signal stack"
+    warn "SIGNAL_BOT_NUMBER not set in .env.azure.${AZURE_ENVIRONMENT} — skipping Signal stack"
   fi
 
   step "Step 8: Deploy user container app"
   if [[ -z "$USER_SLUG" ]]; then
-    warn "USER_SLUG not set in .env, skipping user app deployment"
+    warn "USER_SLUG not set in .env.azure.${AZURE_ENVIRONMENT}, skipping user app deployment"
   else
     IMAGE_REF="${ACR_NAME}.azurecr.io/openclaw-golden:${IMAGE_TAG}"
     terraform -chdir=infra/user-app init -input=false ${TF_BACKEND_ARGS}
@@ -353,8 +359,6 @@ rebuild() {
       warn "Signal: skipped (missing vars or proxy not deployed)"
     fi
 
-    export TF_VAR_tf_state_resource_group="${TF_STATE_RG}"
-    export TF_VAR_tf_state_storage_account="${TF_STATE_SA}"
     export TF_VAR_compass_api_key="${COMPASS_API_KEY:-placeholder}"
     export TF_VAR_openclaw_gateway_auth_token="${OPENCLAW_GATEWAY_AUTH_TOKEN:-placeholder}"
     terraform -chdir=infra/user-app apply -auto-approve \
@@ -363,12 +367,17 @@ rebuild() {
       -var="location=${AZURE_LOCATION}" \
       -var="image_ref=${IMAGE_REF}" \
       -var="graph_mcp_url=${GRAPH_MCP_URL:-placeholder}" \
+      -var="resource_group_name=${RG_NAME}" \
+      -var="key_vault_name=${KV_NAME}" \
+      -var="acr_name=${ACR_NAME}" \
+      -var="cae_name=${CAE_NAME}" \
+      -var="cae_nfs_storage_name=${CAE_NFS_STORAGE_NAME}" \
       ${SIGNAL_VARS}
-    ok "User app ca-openclaw-${USER_SLUG} deployed"
+    ok "User app ca-openclaw-${AZURE_ENVIRONMENT}-${USER_SLUG} deployed"
   fi
 
   step "Step 9: Manual action required"
-  echo "Recreate ca-graph-mcp-gw-\${USER_SLUG} manually (image must be rebuilt separately)."
+  echo "Recreate ca-graph-mcp-gw-${AZURE_ENVIRONMENT}-\${USER_SLUG} manually (image must be rebuilt separately)."
   echo "Backup is at /tmp/graph-mcp-backup.json (if it existed)."
   echo "See REBUILD.md Step 9 for the az containerapp create command."
 
@@ -392,7 +401,7 @@ rebuild() {
   echo -e "${GREEN} Rebuild complete!${NC}"
   echo -e "${GREEN}=========================================${NC}"
   echo ""
-  echo "Remaining manual step: recreate ca-graph-mcp-gw-\${USER_SLUG}"
+  echo "Remaining manual step: recreate ca-graph-mcp-gw-${AZURE_ENVIRONMENT}-\${USER_SLUG}"
   echo "See REBUILD.md Step 9 for details."
 }
 
