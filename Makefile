@@ -290,7 +290,7 @@ azure-deploy-user: tf-init-user tf-workspace-user ## Deploy an isolated Containe
 	export TF_VAR_signal_user_phone="$(SIGNAL_USER_PHONE)"; \
 	export TF_VAR_signal_cli_url="$(SIGNAL_CLI_URL_TF)"; \
 	export TF_VAR_signal_proxy_auth_token="$(SIGNAL_PROXY_AUTH_TOKEN_TF)"; \
-	terraform -chdir=$(TF_USER_DIR) apply \
+	terraform -chdir=$(TF_USER_DIR) apply -auto-approve \
 		-var="user_slug=$(USER_SLUG)" \
 		-var="environment=$(AZURE_ENVIRONMENT)" \
 		-var="location=$(AZURE_LOCATION)" \
