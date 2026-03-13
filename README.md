@@ -219,9 +219,46 @@ If your ACR has network rules, the Makefile temporarily opens the firewall for t
 
 ### Step 3: Deploy the Graph MCP Gateway
 
-The Graph MCP gateway (`ca-graph-mcp-gw-<env>-<user>`) provides Microsoft 365 integration. It is deployed separately (not managed by the user-app Terraform module). See your organization's M365 gateway documentation for setup.
+The Graph MCP gateway (`ca-graph-mcp-gw-<env>-<user>`) provides Microsoft 365 integration (calendar, email, contacts via Microsoft Graph API). It is deployed separately from the user-app Terraform module.
 
-The user-app deployment auto-discovers its FQDN at deploy time.
+**Deploy the gateway container:**
+
+```bash
+# Get the CAE default domain for internal FQDNs
+CAE_DOMAIN=$(az containerapp env show -n cae-openclaw-prod -g rg-openclaw-prod \
+  --query "properties.defaultDomain" -o tsv)
+
+az containerapp create \
+  --name ca-graph-mcp-gw-prod-alice \
+  --resource-group rg-openclaw-prod \
+  --environment cae-openclaw-prod \
+  --image <acr>.azurecr.io/graph-mcp-gw:latest \
+  --cpu 0.25 --memory 0.5Gi \
+  --min-replicas 1 --max-replicas 1 \
+  --ingress internal --target-port 3000 \
+  --env-vars \
+    "TENANT_ID=<your-azure-ad-tenant-id>" \
+    "CLIENT_ID=<your-app-registration-client-id>" \
+    "PORT=3000"
+```
+
+Then patch in the NFS volume mount via `az rest` for token cache persistence (same approach as signal-cli).
+
+**Verify the gateway:**
+
+```bash
+GW_FQDN="ca-graph-mcp-gw-prod-alice.internal.${CAE_DOMAIN}"
+
+# Health check (from within the VNet or another container)
+curl -s "http://${GW_FQDN}/health"
+
+# Auth status — shows whether a Microsoft token is cached
+curl -s "http://${GW_FQDN}/auth/status"
+```
+
+**First-time Microsoft auth:** The gateway uses the device-code flow. On first start, check the gateway logs for a URL and code. Open the URL in a browser, enter the code, and sign in with your Microsoft account. The token is cached on the NFS volume and survives restarts.
+
+The user-app deployment auto-discovers the gateway FQDN at deploy time and injects it as `GRAPH_MCP_URL`.
 
 ### Step 4: Deploy the User Container App
 
@@ -443,7 +480,9 @@ COPY entrypoint.sh /app/entrypoint.sh
 3. **Compass provider patching** -- Always updates `baseUrl` and `apiKey` from `COMPASS_BASE_URL` and `COMPASS_API_KEY` env vars (ensures config changes propagate without needing a config wipe)
 4. **Signal URL patching** -- Assembles `SIGNAL_HTTP_URL` from components and patches it into the config; re-enables the Signal channel
 5. **Workspace template copy** -- Copies the baked-in workspace (skills, tools, identity docs) on first boot
-6. **Starts the OpenClaw gateway** -- Binds to `0.0.0.0:18789` on the LAN interface
+6. **Workspace file templating** -- Re-runs `envsubst` on `AGENTS.md`, `SKILL.md`, and `instructions/*.md` **on every boot** (not just first boot) to resolve `${GRAPH_MCP_URL}` and any other environment placeholders. This ensures image upgrades or env var changes always take effect without requiring a config wipe.
+7. **Config cleanup** -- Removes unsupported keys from `openclaw.json` (e.g., the `instructions` key, which OpenCode supports but OpenClaw does not). This prevents crash-loops from leftover config entries.
+8. **Starts the OpenClaw gateway** -- Binds to `0.0.0.0:18789` on the LAN interface
 
 ### Upgrading the Base Image
 
@@ -455,6 +494,17 @@ make acr-build-push AZURE_ENVIRONMENT=prod IMAGE_TAG=v2.0.0
 # 3. Redeploy users (updates IMAGE_REF)
 make azure-deploy-user AZURE_ENVIRONMENT=prod IMAGE_TAG=v2.0.0
 ```
+
+> **Note:** When using `IMAGE_TAG=latest`, `make azure-deploy-user` may not trigger a new
+> revision because Terraform sees no change in the image reference. Force it with:
+>
+> ```bash
+> az containerapp update -n ca-openclaw-prod-alice -g rg-openclaw-prod \
+>   --image openclawprodacr.azurecr.io/openclaw-golden:latest \
+>   --revision-suffix "$(date +%s)"
+> ```
+>
+> Alternatively, use unique image tags (e.g., `v2.0.1`) to avoid this issue entirely.
 
 ### Rolling Back
 
@@ -589,9 +639,10 @@ All targets accept `AZURE_ENVIRONMENT=<env>` to target a specific environment.
     ├── SOUL.md                  # Agent personality / system prompt
     ├── IDENTITY.md              # Agent identity config
     ├── TOOLS.md                 # Available tools reference
-    ├── AGENTS.md                # Agent configuration
+    ├── AGENTS.md                # Core rules + M365 gateway instructions (loaded every request)
     ├── BOOTSTRAP.md             # First-boot instructions
     ├── HEARTBEAT.md             # Periodic health check config
+    ├── instructions/            # Per-agent instruction files (envsubst-templated on boot)
     └── skills/                  # Agent skills (M365 gateway, search, etc.)
         ├── m365-graph-gateway/
         ├── tavily-search/
@@ -611,6 +662,9 @@ All targets accept `AZURE_ENVIRONMENT=<env>` to target a specific environment.
 | Azure org policy may block remote TF state | `publicNetworkAccess: Disabled` on storage accounts makes remote backends unreachable | Use `backend "local" {}` (the default in this repo). |
 | Dual egress IPs from deployer machines | Different Azure services see different source IPs | The Makefile auto-detects both IPs via `ifconfig.me` and `api.ipify.org`. |
 | Key Vault firewall propagation is slow | IP rule changes take 1-2+ minutes to take effect | The Makefile includes a 15-second wait after firewall changes. |
+| OpenClaw does not support the `instructions` config key | Unlike OpenCode (the upstream project), OpenClaw's config schema does not recognize the `instructions` key. Adding it causes the config to be rejected with `Unrecognized key` and the gateway process exits (crash-loop). | Embed instructions directly into workspace markdown files (e.g., `AGENTS.md`) which are loaded on every request. The entrypoint includes a cleanup step to remove this key from existing configs. |
+| Shell tool is named `bash`, not `exec` | OpenClaw exposes the shell tool as `bash`. Workspace files referencing `exec` will silently fail to trigger tool calls. | Audit all workspace files (`SOUL.md`, `SKILL.md`, skills/) when porting from OpenCode. Use `bash` in all tool-call examples and instructions. |
+| Image rebuild with same tag doesn't trigger new revision | When using `IMAGE_TAG=latest`, Terraform sees no change in the image reference and won't create a new revision. The container keeps running the old image. | Use `az containerapp update --image <ref> --revision-suffix "$(date +%s)"` to force a new revision. Or use unique tags (e.g., `v2.0.1`) instead of `latest`. |
 
 ---
 
@@ -627,3 +681,62 @@ All targets accept `AZURE_ENVIRONMENT=<env>` to target a specific environment.
 | Deployer gets 403 on multiple services | You may have two outbound IPs. Check both `curl -s ifconfig.me` and `curl -s https://api.ipify.org`; the Makefile `DEPLOYER_IPS` handles this automatically. |
 | `signal-cli spawn error: EACCES` in logs | Harmless. The OpenClaw app tries to run a local `signal-cli` binary (which doesn't exist in the golden image). Signal messages flow through the HTTP proxy and work fine. |
 | `az containerapp exec` fails in scripts | Non-TTY contexts get `termios.error`. Use `az containerapp logs show` or Log Analytics queries instead. |
+| Agent says "I'm not connected to your calendar" or ignores MCP tools | Three-layer failure chain: (1) Verify Compass `baseUrl` is correct -- check logs for `Patched Compass provider`; (2) Verify `GRAPH_MCP_URL` was resolved in workspace files -- check logs for `Resolving GRAPH_MCP_URL in AGENTS.md` and confirm no literal `${GRAPH_MCP_URL}` remains; (3) Verify M365 gateway instructions are in `AGENTS.md` (not in config `instructions` key) and the gateway is healthy: `curl -s http://<gw-fqdn>/health`. |
+| Rebuilt image with `latest` tag but container runs old code | Terraform doesn't detect a new image when the tag is unchanged. Force a new revision: `az containerapp update -n <app> -g <rg> --image <ref> --revision-suffix "$(date +%s)"` |
+
+---
+
+## Observability
+
+Container logs are collected in Log Analytics. Use KQL queries to inspect boot behavior, debug issues, and monitor health.
+
+### Finding the Log Analytics Workspace ID
+
+```bash
+az monitor log-analytics workspace show \
+  -n law-openclaw-prod -g rg-openclaw-prod \
+  --query "customerId" -o tsv
+```
+
+### KQL Query Examples
+
+**Recent logs for a user container (last 30 minutes):**
+
+```kql
+ContainerAppConsoleLogs_CL
+| where ContainerAppName_s == 'ca-openclaw-prod-alice'
+| where TimeGenerated > ago(30m)
+| project TimeGenerated, Log_s
+| order by TimeGenerated desc
+```
+
+**Boot/entrypoint messages (verify patching steps ran):**
+
+```kql
+ContainerAppConsoleLogs_CL
+| where ContainerAppName_s == 'ca-openclaw-prod-alice'
+| where Log_s has_any ("Patched Compass", "Resolving GRAPH_MCP_URL", "Removing unsupported", "listening on")
+| project TimeGenerated, Log_s
+| order by TimeGenerated desc
+| take 20
+```
+
+**Error-level logs across all OpenClaw containers:**
+
+```kql
+ContainerAppConsoleLogs_CL
+| where ContainerAppName_s startswith 'ca-openclaw-'
+| where Log_s has_any ("error", "Error", "ERROR", "FATAL", "crash")
+| project TimeGenerated, ContainerAppName_s, Log_s
+| order by TimeGenerated desc
+| take 50
+```
+
+### Running Queries from the CLI
+
+```bash
+az monitor log-analytics query \
+  --workspace <workspace-customer-id> \
+  --analytics-query "ContainerAppConsoleLogs_CL | where ContainerAppName_s == 'ca-openclaw-prod-alice' | where TimeGenerated > ago(1h) | project TimeGenerated, Log_s | order by TimeGenerated desc | take 20" \
+  -o table
+```
