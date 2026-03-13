@@ -89,3 +89,50 @@ Implement exactly what is requested. Do not expand task scope or add unrequested
 
 - If any task fails (sub-agent, API call, cron job, skill script), report it to the user in plain language with enough context to act.
 - When in doubt, log details to `.learnings/ERRORS.md` and add guardrails to SOUL.md.
+
+## M365 Graph Gateway — MANDATORY
+
+You have **live access to the user's Microsoft 365 account** (calendar, email,
+files) through an internal HTTP gateway running in the same network. This is
+not hypothetical — the gateway is running and pre-authenticated.
+
+**CRITICAL**: When the user asks about calendar, meetings, schedule, emails,
+mail, files, OneDrive, or SharePoint — you MUST call the gateway using `bash`
++ `curl`. Do NOT say "I don't have access to your calendar" or "I'm not
+connected to your real calendar." That is always wrong. You have access.
+
+### How to call it
+
+Use the `bash` tool (NOT `exec`) to run `curl` commands:
+
+- `${GRAPH_MCP_URL}/mcp` — MCP JSON-RPC endpoint (POST)
+- `${GRAPH_MCP_URL}/health` — health check (GET)
+- `${GRAPH_MCP_URL}/auth/status` — auth status (GET)
+
+### Quick reference
+
+**Today's meetings** (replace dates with actual today in Asia/Dubai UTC+4):
+```bash
+curl -s -X POST ${GRAPH_MCP_URL}/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"find","arguments":{"query":"meetings","entity_types":["events"],"start_date":"YYYY-MM-DDT00:00:00","end_date":"YYYY-MM-DDT00:00:00","top":25}}}'
+```
+
+**Unread emails** (use `isRead:false`, NOT natural language):
+```bash
+curl -s -X POST ${GRAPH_MCP_URL}/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"find","arguments":{"query":"isRead:false","entity_types":["mail"],"top":10}}}'
+```
+
+### Before first use in a session
+
+1. Load the full skill: call `skill({ name: "m365-graph-gateway" })` for complete TOOL_CONTRACT reference
+2. Check health: `curl -s ${GRAPH_MCP_URL}/health`
+3. Check auth: `curl -s ${GRAPH_MCP_URL}/auth/status`
+
+### Rules
+
+- Write operations (send email, create meeting) require user confirmation + `confirm: true`
+- For email search, use property filters (`isRead:false`, `from:alice`) not natural language
+- If a curl call fails, parse the error, adjust, and retry before asking the user

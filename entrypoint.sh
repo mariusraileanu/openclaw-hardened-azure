@@ -149,6 +149,17 @@ if [[ -n "${GRAPH_MCP_URL:-}" ]] && [[ -f "${SKILL_FILE}" ]]; then
   fi
 fi
 
+# Always resolve env var placeholders in AGENTS.md on every boot.
+# AGENTS.md is loaded on every request and contains ${GRAPH_MCP_URL} placeholders
+# for the M365 gateway instructions.
+AGENTS_FILE="${OPENCLAW_STATE_DIR}/workspace/AGENTS.md"
+SOURCE_AGENTS="/app/config/workspace/AGENTS.md"
+if [[ -n "${GRAPH_MCP_URL:-}" ]] && [[ -f "${SOURCE_AGENTS}" ]]; then
+  echo "Resolving GRAPH_MCP_URL in AGENTS.md ..."
+  envsubst '${GRAPH_MCP_URL}' < "${SOURCE_AGENTS}" > "${AGENTS_FILE}.tmp" \
+    && mv "${AGENTS_FILE}.tmp" "${AGENTS_FILE}"
+fi
+
 # Always resolve env var placeholders in instruction files on every boot.
 # The instructions/ dir may contain ${GRAPH_MCP_URL} placeholders that must be
 # resolved from the container environment for the agent to use live URLs.
@@ -165,22 +176,20 @@ if [[ -n "${GRAPH_MCP_URL:-}" ]] && [[ -d "${SOURCE_INSTR_DIR}" ]]; then
   done
 fi
 
-# Always patch the 'instructions' key into openclaw.json on every boot.
-# Existing configs created before this key was added won't have it, so we
-# inject it the same way we patch Compass baseUrl and Signal httpUrl.
+# Always remove the 'instructions' key from openclaw.json if it exists.
+# OpenClaw does not support this config key and will reject the config.
 if [[ -f "${OPENCLAW_CONFIG_FILE}" ]]; then
   python3 -c "
 import json, os
 cfg_path = os.environ['OPENCLAW_CONFIG_FILE']
 with open(cfg_path) as f:
     cfg = json.load(f)
-desired = ['workspace/instructions/m365-gateway.md']
-if cfg.get('instructions') != desired:
-    cfg['instructions'] = desired
+if 'instructions' in cfg:
+    del cfg['instructions']
     with open(cfg_path, 'w') as f:
         json.dump(cfg, f, indent=2)
-    print(f'Patched instructions key in {cfg_path}')
-" 2>/dev/null || echo "WARNING: failed to patch instructions key in openclaw.json"
+    print(f'Removed invalid instructions key from {cfg_path}')
+" 2>/dev/null || echo "WARNING: failed to clean instructions key from openclaw.json"
 fi
 
 # Bridge env var naming: Azure KV sets OPENCLAW_GATEWAY_AUTH_TOKEN,

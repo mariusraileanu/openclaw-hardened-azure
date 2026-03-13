@@ -17,9 +17,6 @@
       }
     }
   },
-  "instructions": [
-    "workspace/instructions/m365-gateway.md"
-  ],
   "agents": {
     "defaults": {
       "model": {
