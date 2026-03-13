@@ -22,7 +22,7 @@ You call the gateway using **`curl` via your shell/exec capability**. You do NOT
 need an MCP server registration, a special plugin, or any other wiring. You
 already have everything you need:
 
-1. **`exec` (shell) tool** — run `curl` commands from this host.
+1. **`bash` (shell) tool** — run `curl` commands from this host.
 2. **Network access** — the gateway runs in the same VNet as this agent.
 3. **Pre-authenticated** — the gateway handles Microsoft auth; no tokens needed from you.
 

@@ -149,6 +149,40 @@ if [[ -n "${GRAPH_MCP_URL:-}" ]] && [[ -f "${SKILL_FILE}" ]]; then
   fi
 fi
 
+# Always resolve env var placeholders in instruction files on every boot.
+# The instructions/ dir may contain ${GRAPH_MCP_URL} placeholders that must be
+# resolved from the container environment for the agent to use live URLs.
+INSTR_DIR="${OPENCLAW_STATE_DIR}/workspace/instructions"
+SOURCE_INSTR_DIR="/app/config/workspace/instructions"
+if [[ -n "${GRAPH_MCP_URL:-}" ]] && [[ -d "${SOURCE_INSTR_DIR}" ]]; then
+  mkdir -p "${INSTR_DIR}"
+  for src in "${SOURCE_INSTR_DIR}"/*.md; do
+    [[ -f "${src}" ]] || continue
+    fname="$(basename "${src}")"
+    echo "Resolving GRAPH_MCP_URL in instructions/${fname} ..."
+    envsubst '${GRAPH_MCP_URL}' < "${src}" > "${INSTR_DIR}/${fname}.tmp" \
+      && mv "${INSTR_DIR}/${fname}.tmp" "${INSTR_DIR}/${fname}"
+  done
+fi
+
+# Always patch the 'instructions' key into openclaw.json on every boot.
+# Existing configs created before this key was added won't have it, so we
+# inject it the same way we patch Compass baseUrl and Signal httpUrl.
+if [[ -f "${OPENCLAW_CONFIG_FILE}" ]]; then
+  python3 -c "
+import json, os
+cfg_path = os.environ['OPENCLAW_CONFIG_FILE']
+with open(cfg_path) as f:
+    cfg = json.load(f)
+desired = ['workspace/instructions/m365-gateway.md']
+if cfg.get('instructions') != desired:
+    cfg['instructions'] = desired
+    with open(cfg_path, 'w') as f:
+        json.dump(cfg, f, indent=2)
+    print(f'Patched instructions key in {cfg_path}')
+" 2>/dev/null || echo "WARNING: failed to patch instructions key in openclaw.json"
+fi
+
 # Bridge env var naming: Azure KV sets OPENCLAW_GATEWAY_AUTH_TOKEN,
 # but the CLI --token flag reads OPENCLAW_GATEWAY_TOKEN (without _AUTH_).
 export OPENCLAW_GATEWAY_TOKEN="${OPENCLAW_GATEWAY_AUTH_TOKEN:-}"
