@@ -103,6 +103,7 @@ help:
 	@echo "  make add-user U=x ENV=prod  Deploy to prod environment"
 	@echo "  make add-user-plan U=x      Dry-run user deployment"
 	@echo "  make remove-user U=x        Destroy user's Container App"
+	@echo "  make import-user U=x R=<tf_addr> ID=<azure_id>  Import existing Azure resource into TF state"
 	@echo "  make status [U=x]           Show container status (all or specific user)"
 	@echo "  make logs U=x               Tail user's container logs"
 	@echo ""
@@ -440,6 +441,83 @@ remove-user: _tf-init-user _tf-workspace-user ## Destroy a user's Container App
 	echo " User app destroyed: ca-openclaw-$(ENV)-$(U)"; \
 	echo "============================================="; \
 	echo "Note: NFS data at /data/$(U)/ is preserved."
+
+import-user: _tf-init-user _tf-workspace-user ## Import an existing Azure resource into user TF state (R=<addr> ID=<azure_id>)
+	$(check_user)
+	$(check_env_file)
+	@[ -n "$(R)" ] || { echo "Usage: make import-user U=<slug> R=<tf_resource_addr> ID=<azure_resource_id> [ENV=$(ENV)]"; exit 1; }
+	@[ -n "$(ID)" ] || { echo "Usage: make import-user U=<slug> R=<tf_resource_addr> ID=<azure_resource_id> [ENV=$(ENV)]"; exit 1; }
+	@echo "▸ Importing resource into TF state for user '$(U)' on [$(ENV)]"
+	@echo "  Resource: $(R)"
+	@echo "  ID:       $(ID)"
+	$(eval SIGNAL_CLI_URL_TF := $(or $(SIGNAL_CLI_URL),$(shell terraform -chdir=$(TF_SHARED_DIR) output -json signal_cli_url 2>/dev/null | tr -d '"' || echo "")))
+	$(eval SIGNAL_PROXY_AUTH_TOKEN_TF := $(or $(SIGNAL_PROXY_AUTH_TOKEN),$(shell terraform -chdir=$(TF_SHARED_DIR) output -json signal_proxy_auth_token 2>/dev/null | tr -d '"' || echo "")))
+	$(eval SIGNAL_VARS := )
+	$(if $(and $(SIGNAL_CLI_URL_TF),$(SIGNAL_BOT_NUMBER),$(SIGNAL_USER_PHONE)), \
+		$(eval SIGNAL_VARS := -var="signal_bot_number=$(SIGNAL_BOT_NUMBER)"), \
+		)
+	@set -e; \
+	echo "--- Discovering GRAPH_MCP_URL for $(U) ---"; \
+	GW_FQDN=$$(az containerapp show \
+		-n ca-graph-mcp-gw-$(ENV)-$(U) \
+		-g $(AZURE_RESOURCE_GROUP) \
+		--query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null) || true; \
+	if [ -z "$$GW_FQDN" ]; then \
+		echo "WARNING: MCP gateway ca-graph-mcp-gw-$(ENV)-$(U) not found. Using placeholder."; \
+		GRAPH_MCP_URL="placeholder"; \
+	else \
+		GRAPH_MCP_URL="http://$$GW_FQDN"; \
+	fi; \
+	echo "GRAPH_MCP_URL=$$GRAPH_MCP_URL"; \
+	echo ""; \
+	echo "--- Opening firewalls for Terraform ---"; \
+	echo "Detected deployer IPs: $(DEPLOYER_IPS)"; \
+	az storage account update --name $(NFS_SA_NAME) --resource-group $(AZURE_RESOURCE_GROUP) \
+		--default-action Allow --output none; \
+	for ip in $$(echo "$(DEPLOYER_IPS)" | tr ',' ' '); do \
+		az keyvault network-rule add --name $(AZURE_KEY_VAULT_NAME) --resource-group $(AZURE_RESOURCE_GROUP) \
+			--ip-address $$ip/32 --output none 2>/dev/null || true; \
+	done; \
+	echo "Waiting 15s for firewall propagation..."; \
+	sleep 15; \
+	echo ""; \
+	echo "--- Running Terraform import ---"; \
+	export TF_VAR_compass_base_url="$(COMPASS_BASE_URL)"; \
+	export TF_VAR_compass_api_key="$(COMPASS_API_KEY)"; \
+	export TF_VAR_openclaw_gateway_auth_token="$(OPENCLAW_GATEWAY_AUTH_TOKEN)"; \
+	export TF_VAR_signal_user_phone="$(SIGNAL_USER_PHONE)"; \
+	export TF_VAR_signal_cli_url="$(SIGNAL_CLI_URL_TF)"; \
+	export TF_VAR_signal_proxy_auth_token="$(SIGNAL_PROXY_AUTH_TOKEN_TF)"; \
+	terraform -chdir=$(TF_USER_DIR) import \
+		-var="user_slug=$(U)" \
+		-var="environment=$(ENV)" \
+		-var="location=$(AZURE_LOCATION)" \
+		-var="image_ref=$(IMAGE_REF)" \
+		-var="graph_mcp_url=$$GRAPH_MCP_URL" \
+		-var="resource_group_name=$(AZURE_RESOURCE_GROUP)" \
+		-var="key_vault_name=$(AZURE_KEY_VAULT_NAME)" \
+		-var="acr_name=$(AZURE_ACR_NAME)" \
+		-var="cae_name=$(AZURE_CONTAINERAPPS_ENV)" \
+		-var="cae_nfs_storage_name=$(CAE_NFS_STORAGE_NAME)" \
+		$(SIGNAL_VARS) \
+		"$(R)" "$(ID)"; \
+	rc=$$?; \
+	echo ""; \
+	echo "--- Closing firewalls ---"; \
+	az storage account update --name $(NFS_SA_NAME) --resource-group $(AZURE_RESOURCE_GROUP) \
+		--default-action Deny --output none 2>/dev/null || true; \
+	for ip in $$(echo "$(DEPLOYER_IPS)" | tr ',' ' '); do \
+		az keyvault network-rule remove --name $(AZURE_KEY_VAULT_NAME) --resource-group $(AZURE_RESOURCE_GROUP) \
+			--ip-address $$ip/32 --output none 2>/dev/null || true; \
+	done; \
+	if [ $$rc -ne 0 ]; then \
+		echo "ERROR: Terraform import failed (exit code $$rc). Firewalls have been closed."; \
+		exit $$rc; \
+	fi; \
+	echo ""; \
+	echo "============================================="; \
+	echo " Imported $(R) into $(U) workspace"; \
+	echo "============================================="
 
 status: ## Show container status (all users, or specific with U=x)
 	$(check_env_file)

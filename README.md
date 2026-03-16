@@ -627,6 +627,7 @@ make docker-down  # Stop and remove volumes
 | `make add-user U=x` | Deploy a user's Container App |
 | `make add-user-plan U=x` | Dry-run user deployment |
 | `make remove-user U=x` | Destroy a user's Container App |
+| `make import-user U=x R=<addr> ID=<id>` | Import existing Azure resource into user TF state |
 | `make status [U=x]` | Show container status (all or specific user) |
 | `make logs U=x` | Tail user's container logs |
 | **Lifecycle** | |
