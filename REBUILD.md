@@ -8,7 +8,8 @@ Use this when a destructive infrastructure change is required
 
 - Azure CLI authenticated (`az login`)
 - Terraform 1.5+ installed
-- `.env` file populated (see `.env.example`)
+- `.env.azure.<env>` populated (see `.env.azure.example`)
+- `.env.user.<slug>` for each user (see `.env.user.example`)
 - Your public IPs for deployer allowlisting (see Step 5)
 
 ## Why a full rebuild?
@@ -115,11 +116,14 @@ Key details for manual recreation:
 
 ### 1. Destroy user container apps (Terraform-managed)
 
+For each user with a `.env.user.<slug>` file:
+
 ```bash
-make azure-destroy-user
+make remove-user U=alice
+make remove-user U=bob
 ```
 
-This removes `ca-openclaw-<slug>` and its 3 KV secrets.
+This removes `ca-openclaw-<env>-<slug>` and its KV secrets.
 
 ### 2. Delete non-Terraform container apps manually
 
@@ -130,7 +134,7 @@ az containerapp delete -n ca-graph-mcp-gw-<slug> -g rg-openclaw-shared-<env> --y
 ### 3. Destroy shared infrastructure
 
 ```bash
-make azure-bootstrap-destroy
+make deploy-destroy
 ```
 
 This destroys: CAE, VNet, subnets, NSG, private endpoints, DNS zones,
@@ -229,7 +233,7 @@ This creates the full VNet-integrated platform:
 # ACR Tasks build agents have unpredictable IPs — temporarily allow all
 az acr update -n <acr-name> --default-action Allow
 
-make acr-build-push
+make build-image
 
 # Restore firewall
 az acr update -n <acr-name> --default-action Deny
@@ -237,9 +241,11 @@ az acr update -n <acr-name> --default-action Deny
 
 ### 8. Deploy user container app
 
+For each user with a `.env.user.<slug>` file:
+
 ```bash
-export IMAGE_REF=$(make -s acr-show-image)
-make azure-deploy-user
+make add-user U=alice
+make add-user U=bob
 ```
 
 The container app is created with `storage_type = "AzureFile"` (provider
@@ -294,18 +300,24 @@ and Storage. All traffic must then go through private endpoints.
 
 ## Automated rebuild
 
-For a scripted version of the above, see `rebuild.sh`:
+For a scripted version of the above, see `platform-reset.sh`. It discovers all users from `.env.user.*` files automatically — no `--user` flag needed.
 
 ```bash
-./rebuild.sh          # interactive mode (prompts before destructive steps)
-./rebuild.sh --force  # non-interactive (no prompts, use in CI)
+./platform-reset.sh                    # interactive mode (prompts before destructive steps)
+./platform-reset.sh -f                 # non-interactive (no prompts, use in CI)
+./platform-reset.sh -e prod            # target prod environment
+./platform-reset.sh -e prod -f         # non-interactive prod reset
+./platform-reset.sh --nuke-only        # destroy only (all users + shared)
+./platform-reset.sh --rebuild-only     # rebuild only (assumes clean state)
 ```
 
 Or use Makefile targets:
 
 ```bash
-make nuke-all         # Steps 1-4 (destroy everything + clean state)
-make rebuild-all      # Steps 5-10 (rebuild from scratch)
+make nuke-all                          # Steps 1-4 (destroy everything + clean state)
+make rebuild-all                       # Steps 5-10 (rebuild from scratch)
+make full-rebuild                      # Nuke + rebuild end-to-end
+make nuke-all ENV=prod                 # Target prod
 ```
 
 ---

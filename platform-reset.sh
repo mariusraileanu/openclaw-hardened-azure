@@ -2,11 +2,16 @@
 # ===========================================================================
 # OpenClaw Azure Platform — Nuke & Rebuild Script
 #
+# Operates on ALL users discovered from .env.user.* files.
+# No --user flag — this is a platform-wide tool.
+#
 # Usage:
-#   ./rebuild.sh                  # Interactive (prompts before destructive ops)
-#   ./rebuild.sh --force          # Non-interactive (no prompts)
-#   ./rebuild.sh --nuke-only      # Destroy only (steps 1-4)
-#   ./rebuild.sh --rebuild-only   # Rebuild only (steps 5-10), assumes clean state
+#   ./platform-reset.sh                       # Interactive full reset (dev)
+#   ./platform-reset.sh -e prod               # Target prod environment
+#   ./platform-reset.sh -f                    # Non-interactive (no prompts)
+#   ./platform-reset.sh --nuke-only           # Destroy only (all users + shared)
+#   ./platform-reset.sh --rebuild-only        # Rebuild only, assumes clean state
+#   ./platform-reset.sh -e prod -f            # Non-interactive prod reset
 #
 # NFS Lessons Learned:
 #   - azurerm_container_app_environment_storage only supports SMB (AzureFile).
@@ -25,9 +30,56 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
+# CLI argument parsing (POSIX short + GNU long forms)
+# ---------------------------------------------------------------------------
+ENV_ARG="dev"
+FORCE=false
+NUKE_ONLY=false
+REBUILD_ONLY=false
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -e|--env)
+      ENV_ARG="$2"
+      shift 2
+      ;;
+    -f|--force)
+      FORCE=true
+      shift
+      ;;
+    --nuke-only)
+      NUKE_ONLY=true
+      shift
+      ;;
+    --rebuild-only)
+      REBUILD_ONLY=true
+      shift
+      ;;
+    -h|--help)
+      echo "Usage: $0 [-e|--env ENV] [-f|--force] [--nuke-only] [--rebuild-only]"
+      echo ""
+      echo "Options:"
+      echo "  -e, --env ENV       Target environment (default: dev)"
+      echo "  -f, --force         Skip confirmation prompts"
+      echo "  --nuke-only         Destroy only (all users + shared infra)"
+      echo "  --rebuild-only      Rebuild only (assumes clean state)"
+      echo "  -h, --help          Show this help"
+      echo ""
+      echo "This script operates on ALL users discovered from .env.user.* files."
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1"
+      echo "Run '$0 --help' for usage."
+      exit 1
+      ;;
+  esac
+done
+
+# ---------------------------------------------------------------------------
 # Load per-environment env file
 # ---------------------------------------------------------------------------
-AZURE_ENVIRONMENT="${AZURE_ENVIRONMENT:-dev}"
+AZURE_ENVIRONMENT="${ENV_ARG}"
 if [[ -f ".env.azure.${AZURE_ENVIRONMENT}" ]]; then
   set -a
   source ".env.azure.${AZURE_ENVIRONMENT}"
@@ -37,7 +89,6 @@ fi
 AZURE_ENVIRONMENT="${AZURE_ENVIRONMENT:-dev}"
 AZURE_LOCATION="${AZURE_LOCATION:-eastus}"
 AZURE_OWNER_SLUG="${AZURE_OWNER_SLUG:-platform}"
-USER_SLUG="${USER_SLUG:-}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 SIGNAL_PROXY_AUTH_TOKEN="${SIGNAL_PROXY_AUTH_TOKEN:-}"
 
@@ -54,18 +105,33 @@ TF_STATE_RG="${TF_STATE_RG:-rg-openclaw-tfstate-${AZURE_ENVIRONMENT}}"
 TF_STATE_SA="${TF_STATE_SA:-tfopenclawstate${AZURE_ENVIRONMENT}}"
 TF_BACKEND_ARGS="-backend-config=resource_group_name=${TF_STATE_RG} -backend-config=storage_account_name=${TF_STATE_SA}"
 
-FORCE=false
-NUKE_ONLY=false
-REBUILD_ONLY=false
+# ---------------------------------------------------------------------------
+# Discover all users from .env.user.* files
+# ---------------------------------------------------------------------------
+discover_users() {
+  local users=()
+  for f in .env.user.*; do
+    # Skip the example file and any editor backups
+    [[ "$f" == ".env.user.example" ]] && continue
+    [[ "$f" == *.swp ]] || [[ "$f" == *~ ]] && continue
+    [[ ! -f "$f" ]] && continue
+    # Extract slug from filename: .env.user.alice → alice
+    local slug="${f#.env.user.}"
+    users+=("$slug")
+  done
+  echo "${users[@]}"
+}
 
-for arg in "$@"; do
-  case $arg in
-    --force) FORCE=true ;;
-    --nuke-only) NUKE_ONLY=true ;;
-    --rebuild-only) REBUILD_ONLY=true ;;
-    *) echo "Unknown argument: $arg"; exit 1 ;;
-  esac
-done
+# Source a user's env file, overlaying on top of the shared env
+load_user_env() {
+  local slug="$1"
+  local user_file=".env.user.${slug}"
+  if [[ -f "$user_file" ]]; then
+    set -a
+    source "$user_file"
+    set +a
+  fi
+}
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -159,61 +225,69 @@ echo "Resource Group: ${RG_NAME}"
 echo "Environment: ${AZURE_ENVIRONMENT}"
 echo "Location: ${AZURE_LOCATION}"
 
+# Discover users
+USERS=($(discover_users))
+if [[ ${#USERS[@]} -eq 0 ]]; then
+  warn "No .env.user.* files found — no per-user operations will be performed"
+else
+  echo "Users discovered: ${USERS[*]}"
+fi
+
 # ===========================================================================
-# NUKE PHASE (Steps 1-4)
+# NUKE PHASE
 # ===========================================================================
 nuke() {
   step "Step 0a: Ensure remote state backend exists"
   bash infra/bootstrap-state.sh
   ok "Remote state backend ready"
 
-  step "Step 0b: Backup non-Terraform resources"
-  if [[ -n "$USER_SLUG" ]]; then
-    if az containerapp show -n "ca-graph-mcp-gw-${AZURE_ENVIRONMENT}-${USER_SLUG}" -g "$RG_NAME" >/dev/null 2>&1; then
-      az containerapp show -n "ca-graph-mcp-gw-${AZURE_ENVIRONMENT}-${USER_SLUG}" -g "$RG_NAME" -o json > /tmp/graph-mcp-backup.json
-      ok "Backed up ca-graph-mcp-gw-${AZURE_ENVIRONMENT}-${USER_SLUG} to /tmp/graph-mcp-backup.json"
+  step "Step 0b: Backup non-Terraform resources (all users)"
+  for slug in "${USERS[@]}"; do
+    if az containerapp show -n "ca-graph-mcp-gw-${AZURE_ENVIRONMENT}-${slug}" -g "$RG_NAME" >/dev/null 2>&1; then
+      az containerapp show -n "ca-graph-mcp-gw-${AZURE_ENVIRONMENT}-${slug}" -g "$RG_NAME" -o json > "/tmp/graph-mcp-backup-${slug}.json"
+      ok "Backed up ca-graph-mcp-gw-${AZURE_ENVIRONMENT}-${slug} to /tmp/graph-mcp-backup-${slug}.json"
     else
-      warn "ca-graph-mcp-gw-${AZURE_ENVIRONMENT}-${USER_SLUG} not found, nothing to back up"
+      warn "ca-graph-mcp-gw-${AZURE_ENVIRONMENT}-${slug} not found, nothing to back up"
     fi
-  else
-    warn "USER_SLUG not set, skipping graph MCP gateway backup"
-  fi
+  done
 
-  confirm "This will DESTROY all Azure resources in ${RG_NAME}. Continue?"
+  confirm "This will DESTROY all Azure resources in ${RG_NAME} for ALL users (${USERS[*]:-none}). Continue?"
 
-  step "Step 1: Destroy Terraform-managed user container apps"
-  if [[ -n "$USER_SLUG" ]]; then
-    terraform -chdir=infra/user-app init -input=false ${TF_BACKEND_ARGS} >/dev/null 2>&1 || true
-    export TF_VAR_compass_api_key="placeholder"
-    export TF_VAR_openclaw_gateway_auth_token="placeholder"
-    terraform -chdir=infra/user-app destroy -auto-approve \
-      -var="user_slug=${USER_SLUG}" \
-      -var="environment=${AZURE_ENVIRONMENT}" \
-      -var="location=${AZURE_LOCATION}" \
-      -var="image_ref=placeholder" \
-      -var="graph_mcp_url=placeholder" \
-      -var="resource_group_name=${RG_NAME}" \
-      -var="key_vault_name=${KV_NAME}" \
-      -var="acr_name=${ACR_NAME}" \
-      -var="cae_name=${CAE_NAME}" \
-      -var="cae_nfs_storage_name=${CAE_NFS_STORAGE_NAME}" \
-      || warn "User app destroy had issues (may already be gone)"
-    ok "User app destroyed"
-  else
-    warn "USER_SLUG not set, skipping user app destroy"
-  fi
-
-  step "Step 2: Delete non-Terraform container apps"
-  if [[ -n "$USER_SLUG" ]]; then
-    if az containerapp show -n "ca-graph-mcp-gw-${AZURE_ENVIRONMENT}-${USER_SLUG}" -g "$RG_NAME" >/dev/null 2>&1; then
-      az containerapp delete -n "ca-graph-mcp-gw-${AZURE_ENVIRONMENT}-${USER_SLUG}" -g "$RG_NAME" --yes
-      ok "ca-graph-mcp-gw-${AZURE_ENVIRONMENT}-${USER_SLUG} deleted"
+  step "Step 1: Destroy Terraform-managed user container apps (all users)"
+  terraform -chdir=infra/user-app init -input=false >/dev/null 2>&1 || true
+  for slug in "${USERS[@]}"; do
+    echo -e "\n${CYAN}--- Destroying user: ${slug} ---${NC}"
+    # Select the user's TF workspace
+    if terraform -chdir=infra/user-app workspace select "${slug}" 2>/dev/null; then
+      export TF_VAR_compass_api_key="placeholder"
+      export TF_VAR_openclaw_gateway_auth_token="placeholder"
+      terraform -chdir=infra/user-app destroy -auto-approve \
+        -var="user_slug=${slug}" \
+        -var="environment=${AZURE_ENVIRONMENT}" \
+        -var="location=${AZURE_LOCATION}" \
+        -var="image_ref=placeholder" \
+        -var="graph_mcp_url=placeholder" \
+        -var="resource_group_name=${RG_NAME}" \
+        -var="key_vault_name=${KV_NAME}" \
+        -var="acr_name=${ACR_NAME}" \
+        -var="cae_name=${CAE_NAME}" \
+        -var="cae_nfs_storage_name=${CAE_NFS_STORAGE_NAME}" \
+        || warn "User app destroy for '${slug}' had issues (may already be gone)"
+      ok "User app '${slug}' destroyed"
     else
-      warn "ca-graph-mcp-gw-${AZURE_ENVIRONMENT}-${USER_SLUG} not found, skipping"
+      warn "No TF workspace '${slug}' found, skipping TF destroy"
     fi
-  else
-    warn "USER_SLUG not set, skipping graph MCP gateway deletion"
-  fi
+  done
+
+  step "Step 2: Delete non-Terraform container apps (all users)"
+  for slug in "${USERS[@]}"; do
+    if az containerapp show -n "ca-graph-mcp-gw-${AZURE_ENVIRONMENT}-${slug}" -g "$RG_NAME" >/dev/null 2>&1; then
+      az containerapp delete -n "ca-graph-mcp-gw-${AZURE_ENVIRONMENT}-${slug}" -g "$RG_NAME" --yes
+      ok "ca-graph-mcp-gw-${AZURE_ENVIRONMENT}-${slug} deleted"
+    else
+      warn "ca-graph-mcp-gw-${AZURE_ENVIRONMENT}-${slug} not found, skipping"
+    fi
+  done
 
   step "Step 3: Destroy shared infrastructure"
   terraform -chdir=infra/shared init -input=false ${TF_BACKEND_ARGS} >/dev/null 2>&1 || true
@@ -249,7 +323,7 @@ nuke() {
 }
 
 # ===========================================================================
-# REBUILD PHASE (Steps 5-10)
+# REBUILD PHASE
 # ===========================================================================
 rebuild() {
   step "Step 4b: Ensure remote state backend exists"
@@ -339,46 +413,76 @@ rebuild() {
     warn "SIGNAL_BOT_NUMBER not set in .env.azure.${AZURE_ENVIRONMENT} — skipping Signal stack"
   fi
 
-  step "Step 8: Deploy user container app"
-  if [[ -z "$USER_SLUG" ]]; then
-    warn "USER_SLUG not set in .env.azure.${AZURE_ENVIRONMENT}, skipping user app deployment"
+  step "Step 8: Deploy user container apps (all users)"
+  if [[ ${#USERS[@]} -eq 0 ]]; then
+    warn "No .env.user.* files found — skipping user app deployment"
   else
     IMAGE_REF="${ACR_NAME}.azurecr.io/openclaw-golden:${IMAGE_TAG}"
-    terraform -chdir=infra/user-app init -input=false ${TF_BACKEND_ARGS}
+    terraform -chdir=infra/user-app init -input=false
 
     # Auto-capture Signal proxy URL and auth token from shared TF output
-    SIGNAL_VARS=""
     SIGNAL_CLI_URL_TF=$(terraform -chdir=infra/shared output -json signal_cli_url 2>/dev/null | tr -d '"' || echo "")
     SIGNAL_PROXY_AUTH_TOKEN_TF=$(terraform -chdir=infra/shared output -json signal_proxy_auth_token 2>/dev/null | tr -d '"' || echo "")
-    SIGNAL_USER_PHONE="${SIGNAL_USER_PHONE:-}"
-    if [[ -n "$SIGNAL_CLI_URL_TF" ]] && [[ -n "$SIGNAL_BOT_NUMBER" ]] && [[ -n "$SIGNAL_USER_PHONE" ]]; then
-      SIGNAL_VARS="-var=signal_cli_url=${SIGNAL_CLI_URL_TF} -var=signal_bot_number=${SIGNAL_BOT_NUMBER} -var=signal_user_phone=${SIGNAL_USER_PHONE}"
-      export TF_VAR_signal_proxy_auth_token="${SIGNAL_PROXY_AUTH_TOKEN_TF}"
-      echo "Signal enabled: bot=${SIGNAL_BOT_NUMBER} user=${SIGNAL_USER_PHONE}"
-    else
-      warn "Signal: skipped (missing vars or proxy not deployed)"
-    fi
+    SIGNAL_BOT_NUMBER="${SIGNAL_BOT_NUMBER:-}"
 
-    export TF_VAR_compass_api_key="${COMPASS_API_KEY:-placeholder}"
-    export TF_VAR_openclaw_gateway_auth_token="${OPENCLAW_GATEWAY_AUTH_TOKEN:-placeholder}"
-    terraform -chdir=infra/user-app apply -auto-approve \
-      -var="user_slug=${USER_SLUG}" \
-      -var="environment=${AZURE_ENVIRONMENT}" \
-      -var="location=${AZURE_LOCATION}" \
-      -var="image_ref=${IMAGE_REF}" \
-      -var="graph_mcp_url=${GRAPH_MCP_URL:-placeholder}" \
-      -var="resource_group_name=${RG_NAME}" \
-      -var="key_vault_name=${KV_NAME}" \
-      -var="acr_name=${ACR_NAME}" \
-      -var="cae_name=${CAE_NAME}" \
-      -var="cae_nfs_storage_name=${CAE_NFS_STORAGE_NAME}" \
-      ${SIGNAL_VARS}
-    ok "User app ca-openclaw-${AZURE_ENVIRONMENT}-${USER_SLUG} deployed"
+    for slug in "${USERS[@]}"; do
+      echo -e "\n${CYAN}--- Deploying user: ${slug} ---${NC}"
+
+      # Source the user's env file for per-user overrides
+      # (SIGNAL_USER_PHONE, COMPASS_API_KEY, OPENCLAW_GATEWAY_AUTH_TOKEN)
+      load_user_env "$slug"
+
+      # Read per-user values (may have been overridden by load_user_env)
+      local_signal_user_phone="${SIGNAL_USER_PHONE:-}"
+      local_compass_api_key="${COMPASS_API_KEY:-placeholder}"
+      local_gw_auth_token="${OPENCLAW_GATEWAY_AUTH_TOKEN:-placeholder}"
+
+      # Select or create the user's TF workspace
+      terraform -chdir=infra/user-app workspace select -or-create "${slug}"
+
+      # Build Signal vars if all components are available
+      SIGNAL_VARS=""
+      if [[ -n "$SIGNAL_CLI_URL_TF" ]] && [[ -n "$SIGNAL_BOT_NUMBER" ]] && [[ -n "$local_signal_user_phone" ]]; then
+        SIGNAL_VARS="-var=signal_cli_url=${SIGNAL_CLI_URL_TF} -var=signal_bot_number=${SIGNAL_BOT_NUMBER} -var=signal_user_phone=${local_signal_user_phone}"
+        export TF_VAR_signal_proxy_auth_token="${SIGNAL_PROXY_AUTH_TOKEN_TF}"
+        echo "Signal enabled: bot=${SIGNAL_BOT_NUMBER} user=${local_signal_user_phone}"
+      else
+        warn "Signal: skipped for '${slug}' (missing vars or proxy not deployed)"
+      fi
+
+      export TF_VAR_compass_api_key="${local_compass_api_key}"
+      export TF_VAR_openclaw_gateway_auth_token="${local_gw_auth_token}"
+      terraform -chdir=infra/user-app apply -auto-approve \
+        -var="user_slug=${slug}" \
+        -var="environment=${AZURE_ENVIRONMENT}" \
+        -var="location=${AZURE_LOCATION}" \
+        -var="image_ref=${IMAGE_REF}" \
+        -var="graph_mcp_url=${GRAPH_MCP_URL:-placeholder}" \
+        -var="resource_group_name=${RG_NAME}" \
+        -var="key_vault_name=${KV_NAME}" \
+        -var="acr_name=${ACR_NAME}" \
+        -var="cae_name=${CAE_NAME}" \
+        -var="cae_nfs_storage_name=${CAE_NFS_STORAGE_NAME}" \
+        ${SIGNAL_VARS} \
+        || warn "User app deploy for '${slug}' had issues"
+      ok "User app ca-openclaw-${AZURE_ENVIRONMENT}-${slug} deployed"
+
+      # Re-source the shared env to reset overrides before next user
+      if [[ -f ".env.azure.${AZURE_ENVIRONMENT}" ]]; then
+        set -a
+        source ".env.azure.${AZURE_ENVIRONMENT}"
+        set +a
+      fi
+    done
   fi
 
   step "Step 9: Manual action required"
-  echo "Recreate ca-graph-mcp-gw-${AZURE_ENVIRONMENT}-\${USER_SLUG} manually (image must be rebuilt separately)."
-  echo "Backup is at /tmp/graph-mcp-backup.json (if it existed)."
+  for slug in "${USERS[@]}"; do
+    echo "Recreate ca-graph-mcp-gw-${AZURE_ENVIRONMENT}-${slug} manually (image must be rebuilt separately)."
+    if [[ -f "/tmp/graph-mcp-backup-${slug}.json" ]]; then
+      echo "  Backup: /tmp/graph-mcp-backup-${slug}.json"
+    fi
+  done
   echo "See REBUILD.md Step 9 for the az containerapp create command."
 
   step "Step 10: (Optional) Lock down deployer IP access"
@@ -401,7 +505,9 @@ rebuild() {
   echo -e "${GREEN} Rebuild complete!${NC}"
   echo -e "${GREEN}=========================================${NC}"
   echo ""
-  echo "Remaining manual step: recreate ca-graph-mcp-gw-${AZURE_ENVIRONMENT}-\${USER_SLUG}"
+  echo "Users deployed: ${USERS[*]:-none}"
+  echo ""
+  echo "Remaining manual step: recreate ca-graph-mcp-gw-<env>-<slug> for each user."
   echo "See REBUILD.md Step 9 for details."
 }
 

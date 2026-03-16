@@ -54,23 +54,28 @@ Shared-platform, per-user isolated deployment of [OpenClaw](https://github.com/o
 
 ## Environment Configuration
 
-The project uses per-environment config files. The Makefile loads `.env.azure.<env>` automatically based on `AZURE_ENVIRONMENT`.
+The project uses a **two-file pattern**: shared infrastructure config in `.env.azure.<env>` and per-user config in `.env.user.<slug>`. The Makefile loads both automatically.
 
 ```bash
-# Dev uses default naming conventions — minimal config needed
+# 1. Shared infrastructure config (one per environment)
 cp .env.azure.example .env.azure.dev
-# Edit .env.azure.dev with your dev values
+# Edit .env.azure.dev with your dev values (resource names, API keys, Signal bot)
 
-# Prod typically has pre-provisioned resources with different names
-cp .env.azure.example .env.azure.prod
-# Edit .env.azure.prod with resource name overrides and secrets
+# 2. Per-user config (one per user)
+cp .env.user.example .env.user.alice
+# Edit .env.user.alice — set SIGNAL_USER_PHONE, optional API key overrides
+
+# Adding more users is purely additive:
+cp .env.user.example .env.user.bob
+# Edit .env.user.bob
 ```
 
-### Variable Reference
+**Load order:** `.env.azure.<env>` first, then `.env.user.<slug>` — per-user values override shared defaults. The user slug itself comes from `U=` on the command line (never from env files).
+
+### Variable Reference — Shared Config (`.env.azure.<env>`)
 
 | Variable | Description | Default (dev) | Override needed for prod? |
 |----------|-------------|---------------|--------------------------|
-| `AZURE_ENVIRONMENT` | Environment label | `dev` | Yes (`prod`) |
 | `AZURE_LOCATION` | Azure region | `eastus` | Likely (e.g. `uaenorth`) |
 | `AZURE_RESOURCE_GROUP` | Resource group name | `rg-openclaw-shared-<env>` | If naming differs |
 | `AZURE_CONTAINERAPPS_ENV` | CAE name | `cae-openclaw-shared-<env>` | If naming differs |
@@ -79,14 +84,27 @@ cp .env.azure.example .env.azure.prod
 | `NFS_SA_NAME` | NFS storage account | `nfsopenclawshared<env>` | If naming differs |
 | `CAE_NFS_STORAGE_NAME` | CAE storage mount name | `openclaw-nfs` | If naming differs |
 | `IMAGE_TAG` | Golden image tag | `latest` | Optional |
-| `USER_SLUG` | User identifier (3-20 chars, lowercase) | `alice` | Yes |
 | `COMPASS_BASE_URL` | LLM provider base URL | `https://api.core42.ai/v1` | If provider differs |
 | `COMPASS_API_KEY` | LLM provider API key | -- | Yes (secret) |
 | `OPENCLAW_GATEWAY_AUTH_TOKEN` | Gateway auth token | -- | Yes (secret) |
 | `SIGNAL_BOT_NUMBER` | Signal bot phone (E.164) | -- | If using Signal |
-| `SIGNAL_USER_PHONE` | Allowed user phone (E.164) | -- | If using Signal |
 | `SIGNAL_PROXY_AUTH_TOKEN` | Signal proxy auth token | -- | If using Signal |
 | `SIGNAL_CLI_URL` | Signal proxy FQDN | Auto-discovered from TF | Manual for prod |
+
+### Variable Reference — Per-User Config (`.env.user.<slug>`)
+
+| Variable | Description | Required? |
+|----------|-------------|-----------|
+| `SIGNAL_USER_PHONE` | User's Signal phone (E.164) | If using Signal |
+| `COMPASS_API_KEY` | Override shared API key for this user | No |
+| `OPENCLAW_GATEWAY_AUTH_TOKEN` | Override shared gateway token for this user | No |
+
+### Makefile Short Variables
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `ENV` | Environment label | `make deploy ENV=prod` |
+| `U` | User slug | `make add-user U=alice` |
 
 ### Naming Conventions
 
@@ -113,30 +131,35 @@ If you are starting from scratch in a dev subscription where you control all res
 ### 1. Configure Environment
 
 ```bash
+# Shared infrastructure config
 cp .env.azure.example .env.azure.dev
-# Edit .env.azure.dev — set USER_SLUG, COMPASS_API_KEY, OPENCLAW_GATEWAY_AUTH_TOKEN
+# Edit .env.azure.dev — set COMPASS_API_KEY, OPENCLAW_GATEWAY_AUTH_TOKEN
+
+# Per-user config
+cp .env.user.example .env.user.alice
+# Edit .env.user.alice — set SIGNAL_USER_PHONE (if using Signal)
 ```
 
 ### 2. Bootstrap Shared Infrastructure
 
 ```bash
 # Preview
-make azure-bootstrap-plan
+make deploy-plan
 
 # Apply (creates RG, VNet, CAE, ACR, KV, NFS storage, Log Analytics)
-make azure-bootstrap
+make deploy
 ```
 
 ### 3. Build the Golden Image
 
 ```bash
-make acr-build-push
+make build-image
 ```
 
 ### 4. Deploy a User
 
 ```bash
-make azure-deploy-user
+make add-user U=alice
 ```
 
 The Makefile auto-discovers the Graph MCP gateway URL, opens firewalls temporarily for Terraform, deploys the container app, then closes firewalls.
@@ -153,8 +176,13 @@ make signal-register
 
 ### 6. Deploy Additional Users
 
+Adding users is purely additive — create a per-user env file and deploy:
+
 ```bash
-make azure-deploy-user AZURE_ENVIRONMENT=dev USER_SLUG=bob COMPASS_API_KEY=sk-xxx ...
+cp .env.user.example .env.user.bob
+# Edit .env.user.bob — set SIGNAL_USER_PHONE, optional API key overrides
+
+make add-user U=bob
 ```
 
 ---
@@ -178,7 +206,7 @@ Before deploying user containers, ensure these shared resources exist:
 | CAE Storage Mount | NFS share registered as `NfsAzureFile` in the CAE |
 | Log Analytics Workspace | Container logs and diagnostics |
 
-These can be provisioned via `make azure-bootstrap` (dev), ARM/Bicep templates, `az` CLI, Azure Portal, or any IaC tool.
+These can be provisioned via `make deploy` (dev), ARM/Bicep templates, `az` CLI, Azure Portal, or any IaC tool.
 
 ### Step 1: Create Production Config
 
@@ -200,11 +228,17 @@ AZURE_KEY_VAULT_NAME=kvopenclawprod
 NFS_SA_NAME=openclawprodst
 CAE_NFS_STORAGE_NAME=openclaw-nfs-prod
 
-# Per-user config
-USER_SLUG=alice
+# Shared secrets (defaults for all users — can be overridden per-user)
 COMPASS_BASE_URL=https://api.core42.ai/v1
 COMPASS_API_KEY=your-api-key-here
 OPENCLAW_GATEWAY_AUTH_TOKEN=your-gateway-token-here
+```
+
+Then create per-user config files:
+
+```bash
+cp .env.user.example .env.user.alice
+# Edit .env.user.alice — set SIGNAL_USER_PHONE, optional API key overrides
 ```
 
 ### Step 2: Build and Push the Golden Image
@@ -212,7 +246,7 @@ OPENCLAW_GATEWAY_AUTH_TOKEN=your-gateway-token-here
 The golden image is built remotely via ACR Tasks (no local Docker required):
 
 ```bash
-make acr-build-push AZURE_ENVIRONMENT=prod
+make build-image ENV=prod
 ```
 
 If your ACR has network rules, the Makefile temporarily opens the firewall for the build.
@@ -264,10 +298,10 @@ The user-app deployment auto-discovers the gateway FQDN at deploy time and injec
 
 ```bash
 # Dry run
-make azure-deploy-user-plan AZURE_ENVIRONMENT=prod
+make add-user-plan U=alice ENV=prod
 
 # Deploy
-make azure-deploy-user AZURE_ENVIRONMENT=prod
+make add-user U=alice ENV=prod
 ```
 
 What this does:
@@ -375,7 +409,7 @@ When shared infrastructure has no Terraform state (provisioned externally), depl
 **1. Build and push the signal-proxy image:**
 
 ```bash
-make signal-build AZURE_ENVIRONMENT=prod
+make signal-build ENV=prod
 ```
 
 **2. Deploy signal-cli:**
@@ -427,7 +461,7 @@ Signal requires CAPTCHA verification for new number registrations:
 4. Open a shell in the signal-cli container:
 
 ```bash
-make signal-register AZURE_ENVIRONMENT=prod
+make signal-register ENV=prod
 # Or directly:
 az containerapp exec -n ca-signal-cli-prod -g rg-openclaw-prod --command /bin/sh
 ```
@@ -489,13 +523,13 @@ COPY entrypoint.sh /app/entrypoint.sh
 ```bash
 # 1. Update the FROM digest in Dockerfile.wrapper
 # 2. Build and push
-make acr-build-push AZURE_ENVIRONMENT=prod IMAGE_TAG=v2.0.0
+make build-image ENV=prod IMAGE_TAG=v2.0.0
 
 # 3. Redeploy users (updates IMAGE_REF)
-make azure-deploy-user AZURE_ENVIRONMENT=prod IMAGE_TAG=v2.0.0
+make add-user U=alice ENV=prod IMAGE_TAG=v2.0.0
 ```
 
-> **Note:** When using `IMAGE_TAG=latest`, `make azure-deploy-user` may not trigger a new
+> **Note:** When using `IMAGE_TAG=latest`, `make add-user` may not trigger a new
 > revision because Terraform sees no change in the image reference. Force it with:
 >
 > ```bash
@@ -509,7 +543,7 @@ make azure-deploy-user AZURE_ENVIRONMENT=prod IMAGE_TAG=v2.0.0
 ### Rolling Back
 
 ```bash
-make azure-deploy-user AZURE_ENVIRONMENT=prod IMAGE_TAG=v1.0.0
+make add-user U=alice ENV=prod IMAGE_TAG=v1.0.0
 ```
 
 ---
@@ -524,9 +558,9 @@ export COMPASS_API_KEY="sk-local-test"
 export GRAPH_MCP_URL="http://host.docker.internal:5000"
 export OPENCLAW_GATEWAY_AUTH_TOKEN="local-token"
 
-make docker-up              # Build and start on http://localhost:18789
+make docker-up    # Build and start on http://localhost:18789
 docker compose logs -f      # View logs
-make docker-down            # Stop and remove volumes
+make docker-down  # Stop and remove volumes
 ```
 
 ---
@@ -569,35 +603,61 @@ make docker-down            # Stop and remove volumes
 | Target | Description |
 |--------|-------------|
 | `make help` | List all available targets |
+| **Local** | |
+| `make docker-up` | Build and start locally via Docker Compose |
+| `make docker-down` | Stop and remove local container and volumes |
 | **Shared Infrastructure** | |
-| `make azure-bootstrap` | Provision shared infra (RG, VNet, CAE, ACR, KV, NFS) |
-| `make azure-bootstrap-plan` | Dry-run shared infra changes |
-| `make azure-bootstrap-destroy` | Tear down all shared infra (**DANGER**) |
+| `make deploy` | Provision shared infra (RG, VNet, CAE, ACR, KV, NFS) |
+| `make deploy-plan` | Dry-run shared infra changes |
+| `make deploy-destroy` | Tear down all shared infra (**DANGER**) |
+| `make tf-bootstrap-state` | Provision remote TF state backend (run once) |
 | **Golden Image** | |
-| `make acr-build-push` | Build and push golden image via ACR Tasks |
-| `make acr-show-image` | Print the full image reference |
+| `make build-image` | Build and push golden image via ACR Tasks |
+| `make show-image` | Print the full image reference |
+| `make acr-login` | Authenticate Docker to ACR |
 | **Signal Stack** | |
 | `make signal-build` | Build and push signal-proxy image to ACR |
 | `make signal-deploy` | Deploy full Signal stack (build + Terraform) |
-| `make signal-deploy-plan` | Dry-run Signal deployment |
+| `make signal-plan` | Dry-run Signal deployment |
 | `make signal-status` | Show status of signal-cli and signal-proxy containers |
 | `make signal-register` | Open shell in signal-cli for phone registration |
 | `make signal-logs-cli` | Tail signal-cli logs |
 | `make signal-logs-proxy` | Tail signal-proxy logs |
 | **Per-User Deployment** | |
-| `make azure-deploy-user` | Deploy a user's Container App |
-| `make azure-deploy-user-plan` | Dry-run user deployment |
-| `make azure-destroy-user` | Destroy a user's Container App |
-| **Local Testing** | |
-| `make docker-up` | Build and start locally via Docker Compose |
-| `make docker-down` | Stop and remove local container and volumes |
-| **Full Lifecycle** | |
-| `make deploy-all` | 1-click: shared infra + image + Signal + user app |
-| `make nuke-all` | Destroy everything (**DANGER**) |
-| `make rebuild-all` | Rebuild from scratch |
+| `make add-user U=x` | Deploy a user's Container App |
+| `make add-user-plan U=x` | Dry-run user deployment |
+| `make remove-user U=x` | Destroy a user's Container App |
+| `make status [U=x]` | Show container status (all or specific user) |
+| `make logs U=x` | Tail user's container logs |
+| **Lifecycle** | |
+| `make deploy-all U=x` | 1-click: shared infra + image + Signal + user app |
+| `make nuke-all` | Destroy ALL users + shared infra (**DANGER**) |
+| `make rebuild-all` | Rebuild shared infra + ALL users from `.env.user.*` files |
 | `make full-rebuild` | Full nuke then rebuild (**DANGER**) |
 
-All targets accept `AZURE_ENVIRONMENT=<env>` to target a specific environment.
+All targets accept `ENV=<env>` to target a specific environment. Per-user targets require `U=<slug>`.
+
+### Platform Reset
+
+The `platform-reset.sh` script handles full nuke-and-rebuild across ALL users. It discovers users from `.env.user.*` files automatically — no `--user` flag needed.
+
+```bash
+./platform-reset.sh                    # Interactive full reset (dev)
+./platform-reset.sh -e prod            # Target prod environment
+./platform-reset.sh -f                 # Non-interactive (no prompts)
+./platform-reset.sh --nuke-only        # Destroy only
+./platform-reset.sh --rebuild-only     # Rebuild only
+./platform-reset.sh -e prod -f         # Non-interactive prod reset
+```
+
+Or via Makefile:
+
+```bash
+make nuke-all                          # Destroy all users + shared infra
+make rebuild-all                       # Rebuild everything
+make full-rebuild                      # Nuke + rebuild end-to-end
+make nuke-all ENV=prod                 # Target prod
+```
 
 ---
 
@@ -612,8 +672,9 @@ All targets accept `AZURE_ENVIRONMENT=<env>` to target a specific environment.
 ├── docker-compose.yml           # Local testing
 ├── entrypoint.sh                # Container entrypoint (config patching, boot logic)
 ├── openclaw.json.example        # Enterprise config template (${VAR} placeholders)
-├── rebuild.sh                   # Scripted nuke/rebuild
-├── .env.azure.example           # Template for per-environment config
+├── platform-reset.sh            # Scripted nuke/rebuild (all users)
+├── .env.azure.example           # Template for shared infrastructure config
+├── .env.user.example            # Template for per-user config
 ├── .gitignore
 │
 ├── infra/

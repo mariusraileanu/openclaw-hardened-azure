@@ -18,6 +18,7 @@ test-mcp.yaml
 .env.*
 !.env.example
 !.env.azure.example
+!.env.user.example
 secrets.auto.tfvars
 
 # Compiled binaries

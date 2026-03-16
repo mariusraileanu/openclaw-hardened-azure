@@ -20,7 +20,7 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# Load per-environment env file (same pattern as Makefile / rebuild.sh)
+# Load per-environment env file (same pattern as Makefile / platform-reset.sh)
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
