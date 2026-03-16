@@ -441,9 +441,12 @@ az containerapp create \
   --ingress internal --target-port 8080 \
   --env-vars \
     "SIGNAL_CLI_URL=http://ca-signal-cli-prod.internal.<cae-domain>" \
-    "AUTH_TOKEN=<your-proxy-auth-token>" \
-    "SIGNAL_KNOWN_PHONES=+<bot-number>"
+    "AUTH_TOKEN=<your-proxy-auth-token>"
 ```
+
+> **Note:** `SIGNAL_KNOWN_PHONES` is managed automatically by `make signal-update-phones`,
+> which is called after `add-user`, `remove-user`, and `signal-deploy`. It collects
+> `SIGNAL_USER_PHONE` from all `.env.user.*` files plus the bot number.
 
 **4. Set `SIGNAL_CLI_URL` in your `.env.azure.prod`** to point to the signal-proxy FQDN (not signal-cli directly):
 
@@ -623,6 +626,7 @@ make docker-down  # Stop and remove volumes
 | `make signal-register` | Open shell in signal-cli for phone registration |
 | `make signal-logs-cli` | Tail signal-cli logs |
 | `make signal-logs-proxy` | Tail signal-proxy logs |
+| `make signal-update-phones` | Sync `SIGNAL_KNOWN_PHONES` on signal-proxy from `.env.user.*` files |
 | **Per-User Deployment** | |
 | `make add-user U=x` | Deploy a user's Container App |
 | `make add-user-plan U=x` | Dry-run user deployment |

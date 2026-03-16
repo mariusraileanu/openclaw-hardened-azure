@@ -70,6 +70,7 @@ endef
         add-user add-user-plan remove-user status logs \
         signal-build signal-deploy signal-plan \
         signal-status signal-register signal-logs-cli signal-logs-proxy \
+        signal-update-phones \
         deploy-all nuke-all rebuild-all full-rebuild
 
 # ===========================================================================
@@ -115,6 +116,7 @@ help:
 	@echo "  make signal-register        Open shell for phone registration"
 	@echo "  make signal-logs-cli        Tail signal-cli logs"
 	@echo "  make signal-logs-proxy      Tail signal-proxy logs"
+	@echo "  make signal-update-phones   Sync SIGNAL_KNOWN_PHONES from .env.user.* files"
 	@echo ""
 	@echo "Lifecycle:"
 	@echo "  make deploy-all U=x         1-click: shared + image + signal + user"
@@ -317,6 +319,7 @@ add-user: _tf-init-user _tf-workspace-user ## Deploy an isolated Container App f
 	az containerapp show -n ca-openclaw-$(ENV)-$(U) -g $(AZURE_RESOURCE_GROUP) \
 		--query "{name:name, status:properties.provisioningState, revision:properties.latestRevisionName, fqdn:properties.configuration.ingress.fqdn}" \
 		-o table 2>/dev/null || echo "  (could not query container status)"
+	@$(MAKE) signal-update-phones ENV=$(ENV) 2>/dev/null || echo "  (signal-update-phones skipped — non-fatal)"
 
 add-user-plan: _tf-init-user _tf-workspace-user ## Plan a user deployment (dry run)
 	$(check_user)
@@ -441,6 +444,7 @@ remove-user: _tf-init-user _tf-workspace-user ## Destroy a user's Container App
 	echo " User app destroyed: ca-openclaw-$(ENV)-$(U)"; \
 	echo "============================================="; \
 	echo "Note: NFS data at /data/$(U)/ is preserved."
+	@$(MAKE) signal-update-phones ENV=$(ENV) 2>/dev/null || echo "  (signal-update-phones skipped — non-fatal)"
 
 import-user: _tf-init-user _tf-workspace-user ## Import an existing Azure resource into user TF state (R=<addr> ID=<azure_id>)
 	$(check_user)
@@ -590,6 +594,7 @@ signal-deploy: _tf-init-shared signal-build ## Deploy full Signal stack (build p
 	@echo "Direct URL: $$(terraform -chdir=$(TF_SHARED_DIR) output -raw signal_cli_direct_url 2>/dev/null)"
 	@echo ""
 	@echo "Next: run 'make signal-register' to register your bot phone number."
+	@$(MAKE) signal-update-phones ENV=$(ENV) 2>/dev/null || echo "  (signal-update-phones skipped — non-fatal)"
 
 signal-plan: _tf-init-shared ## Plan Signal stack deployment (dry run)
 	$(check_env_file)
@@ -641,6 +646,27 @@ signal-logs-proxy: ## Tail signal-proxy container logs
 		--name ca-signal-proxy-$(ENV) \
 		--resource-group $(AZURE_RESOURCE_GROUP) \
 		--follow --tail 100
+
+signal-update-phones: ## Sync SIGNAL_KNOWN_PHONES on signal-proxy from .env.user.* files
+	$(check_env_file)
+	@[ -n "$(SIGNAL_BOT_NUMBER)" ] || { echo "SIGNAL_BOT_NUMBER not set — skipping signal-update-phones"; exit 0; }
+	@echo "▸ Updating SIGNAL_KNOWN_PHONES on ca-signal-proxy-$(ENV)"
+	@PHONES="$(SIGNAL_BOT_NUMBER)"; \
+	for f in .env.user.*; do \
+		case "$$f" in *.example|*.swp|*~) continue ;; esac; \
+		[ -f "$$f" ] || continue; \
+		p=$$(grep -E '^SIGNAL_USER_PHONE=' "$$f" 2>/dev/null | head -1 | cut -d= -f2 | tr -d ' "'"'"''); \
+		if [ -n "$$p" ]; then \
+			PHONES="$$PHONES,$$p"; \
+		fi; \
+	done; \
+	echo "  Phones: $$PHONES"; \
+	az containerapp update \
+		--name ca-signal-proxy-$(ENV) \
+		--resource-group $(AZURE_RESOURCE_GROUP) \
+		--set-env-vars "SIGNAL_KNOWN_PHONES=$$PHONES" \
+		--output none; \
+	echo "  SIGNAL_KNOWN_PHONES updated on ca-signal-proxy-$(ENV)"
 
 # ===========================================================================
 # 1-CLICK DEPLOYMENT
