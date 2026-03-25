@@ -1,6 +1,6 @@
 ---
 name: m365-graph-gateway
-description: Use when the agent needs to read or write Microsoft 365 data (mail, calendar, files, or Copilot Retrieval search) via the M365 Graph MCP gateway. Provides JSON-RPC MCP tools for Microsoft Graph with strong guardrails and confirm-gated write operations.
+description: Use when the agent needs to read or write Microsoft 365 data (mail, calendar, files) via the M365 Graph MCP gateway. Provides JSON-RPC MCP tools for Microsoft Graph with strong guardrails and confirm-gated write operations.
 ---
 
 # M365 Graph Gateway Skill
@@ -13,8 +13,7 @@ Use this skill when you need to:
 
 - Work with **mail**: list, search, read, draft, reply, send (with explicit confirmation)
 - Work with **calendar**: list events, check availability, create/modify/cancel meetings
-- Work with **files**: search and retrieve content from SharePoint and OneDrive
-- Use **Copilot Retrieval API** to perform semantic search across SharePoint/OneDrive
+- Work with **files**: search, retrieve metadata, and read content from SharePoint and OneDrive
 
 ## Execution Method — READ THIS FIRST
 
@@ -150,10 +149,10 @@ curl -s -X POST ${GRAPH_MCP_URL}/mcp \
   }'
 ```
 
-### Prepare briefing for a meeting
+### Get email conversation thread
 
-After finding a meeting, use its `id` to generate a briefing package with
-related emails, files, and attendee context:
+After finding an email and getting its full details (with `conversation_id`),
+fetch the entire thread:
 
 ```bash
 curl -s -X POST ${GRAPH_MCP_URL}/mcp \
@@ -163,9 +162,32 @@ curl -s -X POST ${GRAPH_MCP_URL}/mcp \
     "id": 1,
     "method": "tools/call",
     "params": {
-      "name": "prepare_meeting",
+      "name": "get_email_thread",
       "arguments": {
-        "event_id": "AAMk..."
+        "conversation_id": "AAQk...",
+        "include_full": true
+      }
+    }
+  }'
+```
+
+### Get file content
+
+After finding a file, use its `drive_id` and `item_id` to read the content:
+
+```bash
+curl -s -X POST ${GRAPH_MCP_URL}/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/call",
+    "params": {
+      "name": "get_file_content",
+      "arguments": {
+        "drive_id": "b!abc...",
+        "item_id": "01XYZ...",
+        "max_chars": 20000
       }
     }
   }'
@@ -221,20 +243,22 @@ As the agent:
 
 ## Tool Selection Quick Reference
 
-| User asks about...        | Tool to use        | Key params                                    |
-| ------------------------- | ------------------ | --------------------------------------------- |
-| Today's/tomorrow's schedule | `find`           | `entity_types:["events"]`, `start_date`, `end_date` |
-| Unread emails             | `find`             | `query:"isRead:false"`, `entity_types:["mail"]` |
-| Emails from someone       | `find`             | `query:"from:name topic"`, `entity_types:["mail"]` |
-| Full email body           | `get_email`        | `message_id`, `include_full:true`             |
-| Meeting details           | `get_event`        | `event_id`, `include_full:true`               |
-| Meeting prep/briefing     | `prepare_meeting`  | `event_id` or `subject`                       |
-| Send/reply to email       | `compose_email`    | `mode`, `to`, `subject`, `body_html`, `confirm:true` |
-| Schedule a meeting        | `schedule_meeting` | `subject`, `attendees`, times, `confirm:true` |
-| Accept/decline invite     | `respond_to_meeting` | `event_id`, `action`, `confirm:true`        |
-| File/doc search           | `find`             | `entity_types:["files"]`                      |
-| Summarize a document      | `summarize`        | `query` or `drive_id`+`item_id`               |
-| Audit trail               | `audit_list`       | `limit`                                       |
+| User asks about...        | Tool to use          | Key params                                    |
+| ------------------------- | -------------------- | --------------------------------------------- |
+| Today's/tomorrow's schedule | `find`             | `entity_types:["events"]`, `start_date`, `end_date` |
+| Unread emails             | `find`               | `query:"isRead:false"`, `entity_types:["mail"]` |
+| Emails from someone       | `find`               | `query:"from:name topic"`, `entity_types:["mail"]` |
+| Full email body           | `get_email`          | `message_id`, `include_full:true`             |
+| Email conversation thread | `get_email_thread`   | `conversation_id` or `message_id`             |
+| Meeting details           | `get_event`          | `event_id`, `include_full:true`               |
+| Meeting prep/briefing     | `find` + `get_event` | Find meeting, get details, search related context |
+| Send/reply to email       | `compose_email`      | `mode`, `to`, `subject`, `body_html`, `confirm:true` |
+| Schedule a meeting        | `schedule_meeting`   | `subject`, `attendees`, times, `confirm:true` |
+| Accept/decline invite     | `respond_to_meeting` | `event_id`, `action`, `confirm:true`          |
+| File/doc search           | `find`               | `entity_types:["files"]`                      |
+| File details/metadata     | `get_file_metadata`  | `drive_id`, `item_id`                         |
+| Read file contents        | `get_file_content`   | `drive_id`, `item_id`, `max_chars`            |
+| Audit trail               | `audit_list`         | `limit`                                       |
 
 ## Troubleshooting
 

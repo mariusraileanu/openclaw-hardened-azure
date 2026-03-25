@@ -13,6 +13,7 @@ services:
       - COMPASS_API_KEY=${COMPASS_API_KEY}
       - GRAPH_MCP_URL=${GRAPH_MCP_URL}
       - OPENCLAW_GATEWAY_AUTH_TOKEN=${OPENCLAW_GATEWAY_AUTH_TOKEN}
+      - TAVILY_API_KEY=${TAVILY_API_KEY:-}
     volumes:
       # Single-container volume — not shared across containers (KICS info-level false positive)
       - openclaw-data:/app/data

@@ -711,7 +711,6 @@ make nuke-all ENV=prod                 # Target prod
     ├── instructions/            # Per-agent instruction files (envsubst-templated on boot)
     └── skills/                  # Agent skills (M365 gateway, search, etc.)
         ├── m365-graph-gateway/
-        ├── tavily-search/
         ├── prototype-webapp/
         └── self-improving-agent/
 ```

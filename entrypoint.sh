@@ -73,6 +73,12 @@ ch = cfg.get('channels', {}).get('signal')
 if ch:
     ch['enabled'] = False
     ch['autoStart'] = False
+    # Remove allowlist policy when there are no valid senders — newer OpenClaw
+    # versions reject dmPolicy=allowlist with an empty/placeholder allowFrom.
+    allow = ch.get('allowFrom', [])
+    if not allow or all(not s or s.startswith('\${') for s in allow):
+        ch.pop('dmPolicy', None)
+        ch.pop('allowFrom', None)
     with open(cfg_path, 'w') as f:
         json.dump(cfg, f, indent=2)
     print(f'Signal not configured — disabled signal channel in {cfg_path}')
@@ -119,7 +125,7 @@ ch = cfg.get('channels', {}).get('signal', {})
 if ch:
     ch['httpUrl'] = url
     ch['enabled'] = True
-    ch['autoStart'] = True
+    ch['autoStart'] = False  # httpUrl mode: don't spawn local signal-cli
     with open(cfg_path, 'w') as f:
         json.dump(cfg, f, indent=2)
     print(f'Patched signal httpUrl and re-enabled channel in {cfg_path}')
@@ -160,20 +166,13 @@ if [[ -n "${GRAPH_MCP_URL:-}" ]] && [[ -f "${SOURCE_AGENTS}" ]]; then
     && mv "${AGENTS_FILE}.tmp" "${AGENTS_FILE}"
 fi
 
-# Always resolve env var placeholders in instruction files on every boot.
-# The instructions/ dir may contain ${GRAPH_MCP_URL} placeholders that must be
-# resolved from the container environment for the agent to use live URLs.
-INSTR_DIR="${OPENCLAW_STATE_DIR}/workspace/instructions"
-SOURCE_INSTR_DIR="/app/config/workspace/instructions"
-if [[ -n "${GRAPH_MCP_URL:-}" ]] && [[ -d "${SOURCE_INSTR_DIR}" ]]; then
-  mkdir -p "${INSTR_DIR}"
-  for src in "${SOURCE_INSTR_DIR}"/*.md; do
-    [[ -f "${src}" ]] || continue
-    fname="$(basename "${src}")"
-    echo "Resolving GRAPH_MCP_URL in instructions/${fname} ..."
-    envsubst '${GRAPH_MCP_URL}' < "${src}" > "${INSTR_DIR}/${fname}.tmp" \
-      && mv "${INSTR_DIR}/${fname}.tmp" "${INSTR_DIR}/${fname}"
-  done
+# Clean up legacy workspace/instructions/ directory from NFS.
+# M365 gateway instructions are now in AGENTS.md only; the separate
+# instructions/ dir was redundant and wasted context-window tokens.
+LEGACY_INSTR_DIR="${OPENCLAW_STATE_DIR}/workspace/instructions"
+if [[ -d "${LEGACY_INSTR_DIR}" ]]; then
+  echo "Removing legacy workspace/instructions/ dir (content lives in AGENTS.md)..."
+  rm -rf "${LEGACY_INSTR_DIR}"
 fi
 
 # Always remove the 'instructions' key from openclaw.json if it exists.
@@ -190,6 +189,143 @@ if 'instructions' in cfg:
         json.dump(cfg, f, indent=2)
     print(f'Removed invalid instructions key from {cfg_path}')
 " 2>/dev/null || echo "WARNING: failed to clean instructions key from openclaw.json"
+fi
+
+# Patch gateway auth config on every boot.
+# - Local dev (no USER_SLUG): mode=none + loopback proxy (no external access)
+# - Azure (USER_SLUG set):    mode=token + LAN binding (token-authenticated access)
+if [[ -f "${OPENCLAW_CONFIG_FILE}" ]]; then
+  python3 -c "
+import json, os
+cfg_path = os.environ['OPENCLAW_CONFIG_FILE']
+is_azure = bool(os.environ.get('USER_SLUG'))
+with open(cfg_path) as f:
+    cfg = json.load(f)
+gw = cfg.setdefault('gateway', {})
+changed = False
+
+auth = gw.setdefault('auth', {})
+if is_azure:
+    # Azure: token auth with the gateway shared secret
+    token = os.environ.get('OPENCLAW_GATEWAY_AUTH_TOKEN', '')
+    if auth.get('mode') != 'token' and token:
+        auth['mode'] = 'token'
+        auth['token'] = token
+        changed = True
+    elif token and auth.get('token') != token:
+        auth['token'] = token
+        changed = True
+else:
+    # Local dev: no auth (loopback proxy makes all connections local)
+    if auth.get('mode') != 'none':
+        auth['mode'] = 'none'
+        auth.pop('token', None)
+        changed = True
+
+# controlUi config depends on binding mode
+ui = gw.setdefault('controlUi', {})
+if is_azure:
+    # Azure (LAN binding): non-loopback requires origin fallback flag
+    if not ui.get('dangerouslyAllowHostHeaderOriginFallback'):
+        ui['dangerouslyAllowHostHeaderOriginFallback'] = True
+        changed = True
+    # Strip flags that only apply to local dev
+    if ui.pop('dangerouslyDisableDeviceAuth', None) is not None:
+        changed = True
+else:
+    # Local dev (loopback): strip flags that are unnecessary
+    for key in ['dangerouslyAllowHostHeaderOriginFallback', 'dangerouslyDisableDeviceAuth']:
+        if key in ui:
+            del ui[key]
+            changed = True
+# Remove empty controlUi block
+if 'controlUi' in gw and not gw['controlUi']:
+    del gw['controlUi']
+    changed = True
+
+if changed:
+    with open(cfg_path, 'w') as f:
+        json.dump(cfg, f, indent=2)
+    env_label = 'Azure (token)' if is_azure else 'local (none)'
+    print(f'Patched gateway auth config [{env_label}] in {cfg_path}')
+" 2>/dev/null || echo "WARNING: failed to patch gateway auth config"
+fi
+
+# Always clean up invalid Signal dmPolicy/allowFrom on existing configs.
+# Newer OpenClaw versions reject dmPolicy=allowlist when allowFrom is empty.
+if [[ -f "${OPENCLAW_CONFIG_FILE}" ]]; then
+  python3 -c "
+import json, os
+cfg_path = os.environ['OPENCLAW_CONFIG_FILE']
+with open(cfg_path) as f:
+    cfg = json.load(f)
+ch = cfg.get('channels', {}).get('signal', {})
+if not ch.get('enabled', True):
+    allow = ch.get('allowFrom', [])
+    if ch.get('dmPolicy') == 'allowlist' and (not allow or all(not s or s.startswith('\${') for s in allow)):
+        ch.pop('dmPolicy', None)
+        ch.pop('allowFrom', None)
+        with open(cfg_path, 'w') as f:
+            json.dump(cfg, f, indent=2)
+        print(f'Removed invalid Signal dmPolicy/allowFrom in {cfg_path}')
+" 2>/dev/null || echo "WARNING: failed to clean Signal dmPolicy config"
+fi
+
+# Always ensure the Tavily plugin and web search provider are configured.
+# This patches existing openclaw.json files (on NFS) so all users get the
+# native Tavily plugin without a config wipe. Also injects the TAVILY_API_KEY
+# directly into the config as belt-and-suspenders (the runtime also checks
+# process.env.TAVILY_API_KEY, but Azure KV secret-ref env vars can be empty
+# at startup in edge cases).
+if [[ -f "${OPENCLAW_CONFIG_FILE}" ]]; then
+  python3 -c "
+import json, os
+cfg_path = os.environ['OPENCLAW_CONFIG_FILE']
+tavily_key = os.environ.get('TAVILY_API_KEY', '')
+with open(cfg_path) as f:
+    cfg = json.load(f)
+changed = False
+
+# Ensure plugins.entries.tavily exists and is enabled
+plugins = cfg.setdefault('plugins', {})
+entries = plugins.setdefault('entries', {})
+tavily = entries.setdefault('tavily', {})
+if not tavily.get('enabled'):
+    tavily['enabled'] = True
+    changed = True
+ws = tavily.setdefault('config', {}).setdefault('webSearch', {})
+if ws.get('baseUrl') != 'https://api.tavily.com':
+    ws['baseUrl'] = 'https://api.tavily.com'
+    changed = True
+
+# Inject the API key from env into config (belt-and-suspenders).
+# The runtime checks config first, then env — this ensures both paths work.
+if tavily_key and ws.get('apiKey') != tavily_key:
+    ws['apiKey'] = tavily_key
+    changed = True
+
+# Ensure tools.web.search.provider is set to tavily
+tools = cfg.setdefault('tools', {})
+web = tools.setdefault('web', {})
+search = web.setdefault('search', {})
+if search.get('provider') != 'tavily':
+    search['provider'] = 'tavily'
+    changed = True
+
+if changed:
+    with open(cfg_path, 'w') as f:
+        json.dump(cfg, f, indent=2)
+    print(f'Patched Tavily plugin config in {cfg_path}')
+" 2>/dev/null || echo "WARNING: failed to patch Tavily plugin config"
+fi
+
+# Remove the legacy tavily-search skill from existing workspaces (replaced
+# by the native Tavily plugin configured above). Safe to run on every boot;
+# the rm is a no-op once the directory is gone.
+LEGACY_TAVILY="${OPENCLAW_STATE_DIR}/workspace/skills/tavily-search"
+if [[ -d "${LEGACY_TAVILY}" ]]; then
+  echo "Removing legacy tavily-search skill (replaced by native plugin)..."
+  rm -rf "${LEGACY_TAVILY}"
 fi
 
 # Bridge env var naming: Azure KV sets OPENCLAW_GATEWAY_AUTH_TOKEN,
@@ -215,8 +351,18 @@ chmod 644 /etc/profile.d/openclaw.sh
 } >> "${HOME}/.bashrc" 2>/dev/null || true
 
 if [ $# -eq 0 ]; then
-  # Start gateway with LAN binding (port configured in openclaw.json = 18789)
-  exec openclaw gateway --allow-unconfigured --bind lan --port 18789
+  if [[ -n "${USER_SLUG:-}" ]]; then
+    # Azure: bind to LAN (0.0.0.0) with token auth so the Container Apps
+    # ingress can reach the gateway.  Auth is enforced via the shared secret.
+    exec openclaw gateway --allow-unconfigured --bind lan --port 18789
+  else
+    # Local dev: run a TCP proxy on 0.0.0.0:18789 forwarding to 127.0.0.1:18790.
+    # This makes the gateway see all inbound connections as coming from loopback,
+    # satisfying isLocalClient checks for Control UI device-auth scopes.
+    # The gateway binds to loopback-only (auth.mode=none is safe for loopback).
+    node /app/loopback-proxy.mjs 18789 18790 &
+    exec openclaw gateway --allow-unconfigured --bind loopback --port 18790
+  fi
 else
   exec openclaw "$@"
 fi

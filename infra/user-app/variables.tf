@@ -106,6 +106,19 @@ variable "max_replicas" {
 # ---------------------------------------------------------------------------
 # Signal Channel (optional)
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Tavily Web Search (optional)
+# ---------------------------------------------------------------------------
+variable "tavily_api_key" {
+  description = "Tavily API key for web search. Leave empty to skip Tavily secret provisioning (the plugin is always enabled in openclaw.json; it reads TAVILY_API_KEY from the environment)."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+# ---------------------------------------------------------------------------
+# Signal Channel (optional)
+# ---------------------------------------------------------------------------
 variable "signal_cli_url" {
   description = "Base HTTP URL of the shared signal proxy/daemon (e.g. http://host). Auth token is passed separately via signal_proxy_auth_token. Leave empty to skip Signal."
   type        = string

@@ -26,6 +26,7 @@ data "azurerm_container_registry" "shared" {
 
 locals {
   app_name       = "ca-openclaw-${var.environment}-${var.user_slug}"
+  tavily_enabled = var.tavily_api_key != ""
   signal_enabled = var.signal_cli_url != "" && var.signal_bot_number != "" && var.signal_user_phone != ""
 
   tags = {
@@ -45,6 +46,9 @@ locals {
       { name = "OPENCLAW_GATEWAY_AUTH_TOKEN", secretRef = "gateway-token" },
       { name = "USER_SLUG", value = var.user_slug },
     ],
+    local.tavily_enabled ? [
+      { name = "TAVILY_API_KEY", secretRef = "tavily-api-key" },
+    ] : [],
     local.signal_enabled ? [
       { name = "SIGNAL_CLI_URL", value = var.signal_cli_url },
       { name = "SIGNAL_PROXY_AUTH_TOKEN", value = var.signal_proxy_auth_token },
@@ -187,6 +191,16 @@ resource "azurerm_key_vault_secret" "gateway_token" {
   tags            = local.tags
 }
 
+resource "azurerm_key_vault_secret" "tavily_api_key" {
+  count           = local.tavily_enabled ? 1 : 0
+  name            = "${var.user_slug}-tavily-api-key"
+  value           = var.tavily_api_key
+  key_vault_id    = data.azurerm_key_vault.shared.id
+  content_type    = "text/plain"
+  expiration_date = timeadd(time_static.secret_expiry_base.rfc3339, "8760h")
+  tags            = local.tags
+}
+
 # ---------------------------------------------------------------------------
 # Per-secret RBAC: user identity can only read its own secrets
 # ---------------------------------------------------------------------------
@@ -208,6 +222,13 @@ resource "azurerm_role_assignment" "kv_secret_gateway" {
   principal_id         = azurerm_user_assigned_identity.user.principal_id
 }
 
+resource "azurerm_role_assignment" "kv_secret_tavily" {
+  count                = local.tavily_enabled ? 1 : 0
+  scope                = azurerm_key_vault_secret.tavily_api_key[0].resource_versionless_id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_user_assigned_identity.user.principal_id
+}
+
 # ---------------------------------------------------------------------------
 # Wait for Azure AD RBAC propagation before the container app tries to pull
 # secrets with the per-user identity. Role assignments are eventually-consistent
@@ -219,6 +240,7 @@ resource "time_sleep" "rbac_propagation" {
     azurerm_role_assignment.kv_secret_compass,
     azurerm_role_assignment.kv_secret_graph_mcp,
     azurerm_role_assignment.kv_secret_gateway,
+    azurerm_role_assignment.kv_secret_tavily,
   ]
 
   create_duration = "120s"
@@ -273,6 +295,15 @@ resource "azurerm_container_app" "user" {
     identity            = azurerm_user_assigned_identity.user.id
   }
 
+  dynamic "secret" {
+    for_each = local.tavily_enabled ? [1] : []
+    content {
+      name                = "tavily-api-key"
+      key_vault_secret_id = azurerm_key_vault_secret.tavily_api_key[0].versionless_id
+      identity            = azurerm_user_assigned_identity.user.id
+    }
+  }
+
   ingress {
     external_enabled = false
     target_port      = 18789
@@ -324,6 +355,15 @@ resource "azurerm_container_app" "user" {
       env {
         name  = "USER_SLUG"
         value = var.user_slug
+      }
+
+      # Tavily API key (only set when tavily_api_key is provided)
+      dynamic "env" {
+        for_each = local.tavily_enabled ? [1] : []
+        content {
+          name        = "TAVILY_API_KEY"
+          secret_name = "tavily-api-key"
+        }
       }
 
       # Signal channel config (only set when all three Signal variables are provided)
@@ -398,6 +438,7 @@ resource "null_resource" "nfs_volume_patch" {
   triggers = {
     app_id         = azurerm_container_app.user.id
     user_slug      = var.user_slug
+    tavily_enabled = local.tavily_enabled
     signal_enabled = local.signal_enabled
     # Force re-run when the patch body changes (e.g. new env vars, image, etc.)
     patch_hash = sha256(local.nfs_patch_body)

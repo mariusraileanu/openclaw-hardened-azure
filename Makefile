@@ -279,6 +279,7 @@ add-user: _tf-init-user _tf-workspace-user ## Deploy an isolated Container App f
 	export TF_VAR_compass_base_url="$(COMPASS_BASE_URL)"; \
 	export TF_VAR_compass_api_key="$(COMPASS_API_KEY)"; \
 	export TF_VAR_openclaw_gateway_auth_token="$(OPENCLAW_GATEWAY_AUTH_TOKEN)"; \
+	export TF_VAR_tavily_api_key="$(TAVILY_API_KEY)"; \
 	export TF_VAR_signal_user_phone="$(SIGNAL_USER_PHONE)"; \
 	export TF_VAR_signal_cli_url="$(SIGNAL_CLI_URL_TF)"; \
 	export TF_VAR_signal_proxy_auth_token="$(SIGNAL_PROXY_AUTH_TOKEN_TF)"; \
@@ -362,6 +363,7 @@ add-user-plan: _tf-init-user _tf-workspace-user ## Plan a user deployment (dry r
 	export TF_VAR_compass_base_url="$(COMPASS_BASE_URL)"; \
 	export TF_VAR_compass_api_key="$(COMPASS_API_KEY)"; \
 	export TF_VAR_openclaw_gateway_auth_token="$(OPENCLAW_GATEWAY_AUTH_TOKEN)"; \
+	export TF_VAR_tavily_api_key="$(TAVILY_API_KEY)"; \
 	export TF_VAR_signal_user_phone="$(SIGNAL_USER_PHONE)"; \
 	export TF_VAR_signal_cli_url="$(SIGNAL_CLI_URL_TF)"; \
 	export TF_VAR_signal_proxy_auth_token="$(SIGNAL_PROXY_AUTH_TOKEN_TF)"; \
@@ -489,6 +491,7 @@ import-user: _tf-init-user _tf-workspace-user ## Import an existing Azure resour
 	export TF_VAR_compass_base_url="$(COMPASS_BASE_URL)"; \
 	export TF_VAR_compass_api_key="$(COMPASS_API_KEY)"; \
 	export TF_VAR_openclaw_gateway_auth_token="$(OPENCLAW_GATEWAY_AUTH_TOKEN)"; \
+	export TF_VAR_tavily_api_key="$(TAVILY_API_KEY)"; \
 	export TF_VAR_signal_user_phone="$(SIGNAL_USER_PHONE)"; \
 	export TF_VAR_signal_cli_url="$(SIGNAL_CLI_URL_TF)"; \
 	export TF_VAR_signal_proxy_auth_token="$(SIGNAL_PROXY_AUTH_TOKEN_TF)"; \

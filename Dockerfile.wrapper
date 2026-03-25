@@ -6,7 +6,7 @@
 #   docker manifest inspect ghcr.io/openclaw/openclaw:latest
 #   docker inspect ghcr.io/openclaw/openclaw:latest --format='{{index .RepoDigests 0}}'
 
-FROM ghcr.io/openclaw/openclaw@sha256:1f28ead56a68352c2bbbbd4fb45523a237f271dc3be827b073b9274986a2a829
+FROM ghcr.io/openclaw/openclaw@sha256:b86307b257ff42a81353b0d6b3963ccd09bbd9eb1916077d1833a967763c5bc7
 
 USER root
 
@@ -18,12 +18,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends nano gettext-ba
 RUN mkdir -p /app/config /app/data/.openclaw && \
     chown -R 1000:1000 /app
 
-# Create a symlink so `openclaw` works natively in PATH
-RUN ln -s /app/openclaw.mjs /usr/local/bin/openclaw
+# Create a symlink so `openclaw` works natively in PATH (force: newer base images already ship one)
+RUN ln -sf /app/openclaw.mjs /usr/local/bin/openclaw
 
-# Copy enterprise baseline configuration, workspace template, and entrypoint
+# Copy enterprise baseline configuration, workspace template, proxy, and entrypoint
 COPY openclaw.json.example /app/config/openclaw.json.example
 COPY workspace/ /app/config/workspace/
+COPY loopback-proxy.mjs /app/loopback-proxy.mjs
 COPY entrypoint.sh /app/entrypoint.sh
 
 # Ensure entrypoint is executable

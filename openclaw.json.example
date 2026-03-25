@@ -27,8 +27,26 @@
   },
   "gateway": {
     "auth": {
-      "mode": "token",
-      "token": "${OPENCLAW_GATEWAY_AUTH_TOKEN}"
+      "mode": "none"
+    }
+  },
+  "plugins": {
+    "entries": {
+      "tavily": {
+        "enabled": true,
+        "config": {
+          "webSearch": {
+            "baseUrl": "https://api.tavily.com"
+          }
+        }
+      }
+    }
+  },
+  "tools": {
+    "web": {
+      "search": {
+        "provider": "tavily"
+      }
     }
   },
   "channels": {
@@ -36,7 +54,7 @@
       "enabled": true,
       "account": "${SIGNAL_BOT_NUMBER}",
       "httpUrl": "${SIGNAL_HTTP_URL}",
-      "autoStart": true,
+      "autoStart": false,
       "dmPolicy": "allowlist",
       "allowFrom": ["${SIGNAL_USER_PHONE}"]
     }
