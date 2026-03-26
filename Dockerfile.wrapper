@@ -6,7 +6,7 @@
 #   docker manifest inspect ghcr.io/openclaw/openclaw:latest
 #   docker inspect ghcr.io/openclaw/openclaw:latest --format='{{index .RepoDigests 0}}'
 
-FROM ghcr.io/openclaw/openclaw@sha256:b86307b257ff42a81353b0d6b3963ccd09bbd9eb1916077d1833a967763c5bc7
+FROM ghcr.io/openclaw/openclaw@sha256:7091859602df6b8cdd59b38adbaed723a6d94806fdd4274d488400dd2fcf0fb6
 
 USER root
 
