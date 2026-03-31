@@ -1,16 +1,17 @@
 data "azurerm_client_config" "current" {}
 
 locals {
-  resource_group_name = "rg-openclaw-shared-${var.environment}"
-  cae_name            = "cae-openclaw-shared-${var.environment}"
-  acr_name            = "openclawshared${var.environment}acr"
-  kv_name             = "kvopenclawshared${var.environment}"
-  sa_name             = "stopenclawshared${var.environment}"
-  sa_nfs_name         = "nfsopenclawshared${var.environment}"
-  vnet_name           = "vnet-openclaw-shared-${var.environment}"
-  identity_name       = "id-openclaw-shared-${var.environment}"
-  log_analytics_name  = "law-openclaw-shared-${var.environment}"
-  nfs_share_name      = "openclaw-data"
+  resource_group_name  = "rg-openclaw-${var.environment}"
+  cae_name             = "cae-openclaw-${var.environment}"
+  acr_name             = var.acr_name != "" ? var.acr_name : "openclaw${var.environment}acr"
+  kv_name              = "kvopenclaw${var.environment}"
+  sa_name              = var.sa_name != "" ? var.sa_name : "stopenclaw${var.environment}"
+  sa_nfs_name          = "nfsopenclaw${var.environment}"
+  vnet_name            = "vnet-openclaw-${var.environment}"
+  identity_name        = "id-openclaw-${var.environment}"
+  log_analytics_name   = "law-openclaw-${var.environment}"
+  nfs_share_name       = "openclaw-data"
+  cae_nfs_storage_name = "openclaw-nfs-${var.environment}"
 
   tags = {
     environment = var.environment
@@ -32,7 +33,9 @@ resource "azurerm_resource_group" "shared" {
   tags     = local.tags
 
   lifecycle {
-    ignore_changes = [tags["CreatedDate"]]
+    ignore_changes = [
+      tags["CreatedDate"],
+    ]
   }
 }
 
@@ -102,6 +105,24 @@ resource "azurerm_network_security_group" "cae" {
     destination_port_range     = "*"
     source_address_prefix      = "VirtualNetwork"
     destination_address_prefix = "VirtualNetwork"
+  }
+
+  # Allow HTTPS from Internet (only when CAE supports external ingress, e.g. for
+  # Microsoft Teams webhook callbacks). Azure Container Apps terminates TLS and
+  # forwards traffic to the container on the configured target_port.
+  dynamic "security_rule" {
+    for_each = var.cae_internal_only ? [] : [1]
+    content {
+      name                       = "AllowHTTPSInbound"
+      priority                   = 200
+      direction                  = "Inbound"
+      access                     = "Allow"
+      protocol                   = "Tcp"
+      source_port_range          = "*"
+      destination_port_range     = "443"
+      source_address_prefix      = "Internet"
+      destination_address_prefix = "VirtualNetwork"
+    }
   }
 
   # Explicit deny-all inbound catch-all
@@ -290,7 +311,10 @@ resource "azurerm_log_analytics_workspace" "shared" {
 }
 
 # ---------------------------------------------------------------------------
-# Container Apps Environment (VNET-integrated, internal only)
+# Container Apps Environment (VNET-integrated)
+# When cae_internal_only=true: internal LB only (no public endpoints).
+# When cae_internal_only=false: external LB allows per-app public ingress
+# (e.g. for Teams webhook). Apps default to internal unless external_enabled=true.
 # ---------------------------------------------------------------------------
 resource "azurerm_container_app_environment" "shared" {
   name                           = local.cae_name
@@ -298,13 +322,14 @@ resource "azurerm_container_app_environment" "shared" {
   resource_group_name            = azurerm_resource_group.shared.name
   log_analytics_workspace_id     = azurerm_log_analytics_workspace.shared.id
   infrastructure_subnet_id       = azurerm_subnet.cae.id
-  internal_load_balancer_enabled = true
+  internal_load_balancer_enabled = var.cae_internal_only
   tags                           = local.tags
 
   lifecycle {
     ignore_changes = [
       log_analytics_workspace_id,
       infrastructure_resource_group_name, # Azure auto-populates; treating as drift forces CAE replacement
+      workload_profile,
       tags["CreatedDate"],
     ]
   }
@@ -465,15 +490,15 @@ resource "azurerm_storage_share" "openclaw_data" {
 # Mount NFS share into Container Apps Environment
 # ---------------------------------------------------------------------------
 # NOTE: azurerm_container_app_environment_storage only supports SMB (AzureFile).
-# NFS mounts require the "NfsAzureFile" storage type, which is only available
-# via the Azure CLI / REST API (preview feature). We use a null_resource to
-# manage this out-of-band.
-resource "null_resource" "nfs_mount" {
+# NFS storage registration is managed via CLI because ARM PUT for this resource
+# currently rejects nfsAzureFile payload shape in this tenant.
+resource "null_resource" "cae_nfs_storage" {
   triggers = {
-    cae_name = azurerm_container_app_environment.shared.name
-    rg_name  = azurerm_resource_group.shared.name
-    account  = azurerm_storage_account.nfs.name
-    share    = azurerm_storage_share.openclaw_data.name
+    cae_name     = azurerm_container_app_environment.shared.name
+    rg_name      = azurerm_resource_group.shared.name
+    storage_name = local.cae_nfs_storage_name
+    account      = azurerm_storage_account.nfs.name
+    share_name   = azurerm_storage_share.openclaw_data.name
   }
 
   provisioner "local-exec" {
@@ -481,10 +506,10 @@ resource "null_resource" "nfs_mount" {
       az containerapp env storage set \
         --name ${self.triggers.cae_name} \
         --resource-group ${self.triggers.rg_name} \
-        --storage-name openclaw-nfs \
+        --storage-name ${self.triggers.storage_name} \
         --storage-type NfsAzureFile \
         --server ${self.triggers.account}.file.core.windows.net \
-        --file-share /${self.triggers.account}/${self.triggers.share} \
+        --file-share /${self.triggers.account}/${self.triggers.share_name} \
         --access-mode ReadWrite \
         --output none
     EOT
@@ -496,11 +521,13 @@ resource "null_resource" "nfs_mount" {
       az containerapp env storage remove \
         --name ${self.triggers.cae_name} \
         --resource-group ${self.triggers.rg_name} \
-        --storage-name openclaw-nfs \
+        --storage-name ${self.triggers.storage_name} \
         --yes \
         --output none 2>/dev/null || true
     EOT
   }
+
+  depends_on = [azurerm_storage_share.openclaw_data]
 }
 
 # ===========================================================================
@@ -540,9 +567,47 @@ resource "azurerm_private_dns_zone" "file" {
   }
 }
 
+# Container Apps Environment internal DNS — required so the relay Function App
+# (and any other VNet-integrated resource) can resolve *.internal.<cae_domain>.
+resource "azurerm_private_dns_zone" "cae" {
+  name                = azurerm_container_app_environment.shared.default_domain
+  resource_group_name = azurerm_resource_group.shared.name
+  tags                = local.tags
+
+  lifecycle {
+    ignore_changes = [tags["CreatedDate"]]
+  }
+}
+
+resource "azurerm_private_dns_a_record" "cae_wildcard" {
+  name                = "*"
+  zone_name           = azurerm_private_dns_zone.cae.name
+  resource_group_name = azurerm_resource_group.shared.name
+  ttl                 = 300
+  records             = [azurerm_container_app_environment.shared.static_ip_address]
+  tags                = local.tags
+
+  lifecycle {
+    ignore_changes = [tags["CreatedDate"]]
+  }
+}
+
 # ---------------------------------------------------------------------------
 # VNet Links (so Container Apps can resolve private DNS)
 # ---------------------------------------------------------------------------
+resource "azurerm_private_dns_zone_virtual_network_link" "cae" {
+  name                  = "link-cae"
+  resource_group_name   = azurerm_resource_group.shared.name
+  private_dns_zone_name = azurerm_private_dns_zone.cae.name
+  virtual_network_id    = azurerm_virtual_network.shared.id
+  registration_enabled  = false
+  tags                  = local.tags
+
+  lifecycle {
+    ignore_changes = [tags["CreatedDate"]]
+  }
+}
+
 resource "azurerm_private_dns_zone_virtual_network_link" "kv" {
   name                  = "link-kv"
   resource_group_name   = azurerm_resource_group.shared.name
@@ -746,8 +811,8 @@ resource "azurerm_container_app" "signal_cli" {
 
   lifecycle {
     ignore_changes = [
-      template[0].volume,                     # Managed via null_resource (NfsAzureFile workaround)
-      template[0].container[0].volume_mounts, # Added by null_resource after creation
+      template[0].volume,                     # Managed via azapi_update_resource (NfsAzureFile workaround)
+      template[0].container[0].volume_mounts, # Added by AzAPI after creation
       workload_profile_name,                  # Azure auto-sets to "Consumption"
       tags["CreatedDate"],
     ]
@@ -771,8 +836,8 @@ resource "azurerm_container_app" "signal_cli" {
 
     # NOTE: volume is NOT defined here. The azurerm provider only supports
     # "AzureFile" but the CAE storage mount is NfsAzureFile, which causes a
-    # 400 error. The null_resource.signal_nfs_volume_patch below adds the NFS
-    # volume + container volumeMount via REST API after creation.
+    # 400 error. The azapi_update_resource.signal_nfs_volume_patch adds the NFS
+    # volume + container volumeMount after creation.
 
     container {
       name   = "signal-cli"
@@ -791,7 +856,7 @@ resource "azurerm_container_app" "signal_cli" {
         ["daemon", "--http", "0.0.0.0:8080", "--receive-mode=on-start"],
       )
 
-      # NOTE: volume_mounts not defined here — added by null_resource patch
+      # NOTE: volume_mounts not defined here — added by AzAPI patch
 
       # Startup probe: JVM takes a while to initialize
       # 10 * 10s = 100s max startup time
@@ -818,13 +883,12 @@ resource "azurerm_container_app" "signal_cli" {
   }
 }
 
-# Patch signal-cli: add NfsAzureFile volume + container volumeMount via REST API
+# Patch signal-cli: add NfsAzureFile volume + container volumeMount via AzAPI
 # ---------------------------------------------------------------------------
 # The azurerm provider cannot create a container app with NfsAzureFile volumes
 # (only supports "AzureFile", but the CAE storage is registered as NfsAzureFile).
-# So we create the container app bare (no volume/mounts), then this
-# null_resource patches in the NFS volume and updates the container spec
-# to include the volumeMount — all in a single atomic REST PATCH.
+# So we create the container app bare (no volume/mounts), then AzAPI patches in
+# the NFS volume and updates the container spec in one ARM update.
 # IMPORTANT: The PATCH body must include the COMPLETE container spec
 # (args, probes, resources) because Azure replaces the entire containers array.
 
@@ -841,7 +905,7 @@ locals {
         volumes = [
           {
             name        = "signal-data"
-            storageName = "openclaw-nfs"
+            storageName = local.cae_nfs_storage_name
             storageType = "NfsAzureFile"
           }
         ]
@@ -890,41 +954,40 @@ locals {
   })
 }
 
-resource "null_resource" "signal_nfs_volume_patch" {
+resource "azapi_update_resource" "signal_nfs_volume_patch" {
   count = var.signal_cli_enabled ? 1 : 0
 
-  triggers = {
-    app_id     = azurerm_container_app.signal_cli[0].id
-    patch_hash = sha256(local.signal_nfs_patch_body)
+  type        = "Microsoft.App/containerApps@2024-03-01"
+  resource_id = azurerm_container_app.signal_cli[0].id
+  body        = local.signal_nfs_patch_body
+
+  depends_on = [
+    azurerm_container_app.signal_cli,
+    null_resource.cae_nfs_storage,
+  ]
+}
+
+data "azapi_resource" "signal_cli_template" {
+  count = var.signal_cli_enabled ? 1 : 0
+
+  type        = "Microsoft.App/containerApps@2024-03-01"
+  resource_id = azurerm_container_app.signal_cli[0].id
+
+  response_export_values = ["*"]
+
+  depends_on = [azapi_update_resource.signal_nfs_volume_patch]
+}
+
+check "signal_cli_nfs_mount_present" {
+  assert {
+    condition     = !var.signal_cli_enabled || (can(regex("NfsAzureFile", jsonencode(data.azapi_resource.signal_cli_template[0].output))) && can(regex("signal-data", jsonencode(data.azapi_resource.signal_cli_template[0].output))) && can(regex("/signal-data", jsonencode(data.azapi_resource.signal_cli_template[0].output))))
+    error_message = "Signal container app is missing expected NFS volume or mount after AzAPI patch."
   }
-
-  provisioner "local-exec" {
-    command = <<-EOT
-      for i in $(seq 1 30); do
-        state=$(az containerapp show --ids ${azurerm_container_app.signal_cli[0].id} --query "properties.provisioningState" -o tsv 2>/dev/null)
-        if [ "$state" = "Succeeded" ] || [ "$state" = "Failed" ]; then break; fi
-        sleep 10
-      done
-
-      az rest --method PATCH \
-        --uri "${azurerm_container_app.signal_cli[0].id}?api-version=2024-03-01" \
-        --body '${replace(local.signal_nfs_patch_body, "'", "\\'")}' \
-        --output none
-    EOT
-  }
-
-  depends_on = [azurerm_container_app.signal_cli]
 }
 
 # ===========================================================================
-# Signal Routing Proxy (SSE fan-out by sender phone number)
+# Signal Routing Proxy (shared, internal-only)
 # ===========================================================================
-# Sits between signal-cli and all user OpenClaw containers. Maintains one
-# upstream SSE connection to signal-cli, parses sourceNumber from each event,
-# and fans out only to the subscriber matching that phone number.
-# User apps connect to /user/{phone}/api/v1/events and /user/{phone}/api/v1/rpc.
-# This provides per-user message isolation without modifying signal-cli or OpenClaw.
-
 resource "azurerm_container_app" "signal_proxy" {
   count                        = var.signal_cli_enabled && var.signal_proxy_image != "" ? 1 : 0
   name                         = "ca-signal-proxy-${var.environment}"
@@ -1025,4 +1088,175 @@ resource "azurerm_container_app" "signal_proxy" {
   }
 
   depends_on = [azurerm_container_app.signal_cli]
+}
+
+# ===========================================================================
+# Microsoft Teams Webhook Relay (Azure Function — Flex Consumption)
+# ===========================================================================
+# A stateless HTTP proxy that receives Bot Framework webhooks on a public
+# endpoint and forwards them to the corresponding internal Container App.
+# One Function App serves ALL users via payload-based routing:
+#   POST /api/messages → ca-openclaw-{env}-{user_slug}.{cae_domain}:3978/api/messages
+# Uses Flex Consumption (FC1) plan: scales to zero, ~$2/month at low traffic.
+
+# ---------------------------------------------------------------------------
+# Functions subnet (VNet integration for outbound traffic to internal CAE)
+# ---------------------------------------------------------------------------
+resource "azurerm_subnet" "func" {
+  count                = var.msteams_relay_enabled ? 1 : 0
+  name                 = "snet-func"
+  resource_group_name  = azurerm_resource_group.shared.name
+  virtual_network_name = azurerm_virtual_network.shared.name
+  address_prefixes     = [var.subnet_func_cidr]
+
+  delegation {
+    name = "func-delegation"
+    service_delegation {
+      name    = "Microsoft.App/environments"
+      actions = ["Microsoft.Network/virtualNetworks/subnets/join/action"]
+    }
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Storage account for Function App runtime (Flex Consumption uses blob)
+# ---------------------------------------------------------------------------
+resource "azurerm_storage_account" "func" {
+  count                      = var.msteams_relay_enabled ? 1 : 0
+  name                       = "strelayopenclaw${var.environment}"
+  location                   = azurerm_resource_group.shared.location
+  resource_group_name        = azurerm_resource_group.shared.name
+  account_tier               = "Standard"
+  account_replication_type   = "LRS"
+  min_tls_version            = "TLS1_2"
+  https_traffic_only_enabled = true
+  tags                       = local.tags
+
+  lifecycle {
+    ignore_changes = [tags["CreatedDate"]]
+  }
+}
+
+resource "azurerm_storage_container" "func_deploy" {
+  count              = var.msteams_relay_enabled ? 1 : 0
+  name               = "function-deployments"
+  storage_account_id = azurerm_storage_account.func[0].id
+}
+
+# ---------------------------------------------------------------------------
+# Service Plan (Flex Consumption — FC1)
+# ---------------------------------------------------------------------------
+resource "azurerm_service_plan" "relay" {
+  count               = var.msteams_relay_enabled ? 1 : 0
+  name                = "asp-relay-${var.environment}"
+  location            = azurerm_resource_group.shared.location
+  resource_group_name = azurerm_resource_group.shared.name
+  os_type             = "Linux"
+  sku_name            = "FC1"
+  tags                = local.tags
+
+  lifecycle {
+    ignore_changes = [tags["CreatedDate"]]
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Function App (Flex Consumption — Teams webhook relay)
+# ---------------------------------------------------------------------------
+resource "azurerm_function_app_flex_consumption" "relay" {
+  count               = var.msteams_relay_enabled ? 1 : 0
+  name                = var.func_relay_name != "" ? var.func_relay_name : "func-relay-${var.environment}"
+  location            = azurerm_resource_group.shared.location
+  resource_group_name = azurerm_resource_group.shared.name
+  service_plan_id     = azurerm_service_plan.relay[0].id
+
+  runtime_name    = "node"
+  runtime_version = "20"
+
+  storage_container_type      = "blobContainer"
+  storage_container_endpoint  = "${azurerm_storage_account.func[0].primary_blob_endpoint}${azurerm_storage_container.func_deploy[0].name}"
+  storage_authentication_type = "StorageAccountConnectionString"
+  storage_access_key          = azurerm_storage_account.func[0].primary_access_key
+
+  virtual_network_subnet_id = azurerm_subnet.func[0].id
+
+  maximum_instance_count = 2
+  instance_memory_in_mb  = 512
+
+  app_settings = {
+    CAE_DEFAULT_DOMAIN    = azurerm_container_app_environment.shared.default_domain
+    ENVIRONMENT           = var.environment
+    OPENCLAW_HOST_PREFIX  = "ca-openclaw"
+    UPSTREAM_PORT         = "80"
+    UPSTREAM_HOST_STYLE   = "external"
+    MSTEAMS_USER_SLUG_MAP = var.msteams_user_slug_map
+  }
+
+  site_config {
+    vnet_route_all_enabled = true
+  }
+
+  tags = local.tags
+
+  lifecycle {
+    ignore_changes = [tags["CreatedDate"]]
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Shared Azure Bot Service (single registration for all users)
+# ---------------------------------------------------------------------------
+# One bot serves all users. The relay Function App routes incoming Bot
+# Framework POST requests to the correct per-user Container App based on
+# the sender's AAD Object ID (via MSTEAMS_USER_SLUG_MAP).
+
+locals {
+  msteams_bot_enabled = var.msteams_relay_enabled && var.msteams_app_id != ""
+}
+
+resource "azurerm_bot_service_azure_bot" "shared" {
+  count               = local.msteams_bot_enabled ? 1 : 0
+  name                = "bot-openclaw-${var.environment}"
+  resource_group_name = azurerm_resource_group.shared.name
+  location            = "global"
+  sku                 = "F0"
+  microsoft_app_id    = var.msteams_app_id
+  microsoft_app_type  = "SingleTenant"
+
+  microsoft_app_tenant_id = var.msteams_tenant_id
+
+  endpoint = "https://${azurerm_function_app_flex_consumption.relay[0].default_hostname}/api/messages"
+
+  tags = local.tags
+
+  lifecycle {
+    ignore_changes = [
+      endpoint, # May be updated externally
+      tags["CreatedDate"],
+    ]
+  }
+}
+
+resource "azurerm_bot_channel_ms_teams" "shared" {
+  count               = local.msteams_bot_enabled ? 1 : 0
+  bot_name            = azurerm_bot_service_azure_bot.shared[0].name
+  resource_group_name = azurerm_resource_group.shared.name
+  location            = azurerm_bot_service_azure_bot.shared[0].location
+}
+
+# Store the shared bot password in Key Vault (referenced by all user containers)
+resource "azurerm_key_vault_secret" "msteams_app_password" {
+  count        = local.msteams_bot_enabled && var.msteams_app_secret_value != "" ? 1 : 0
+  name         = "shared-msteams-app-password"
+  value        = var.msteams_app_secret_value
+  key_vault_id = azurerm_key_vault.shared.id
+  content_type = "text/plain"
+  tags         = local.tags
+
+  lifecycle {
+    ignore_changes = [
+      value,
+      tags["CreatedDate"],
+    ]
+  }
 }

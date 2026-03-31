@@ -1,0 +1,193 @@
+{
+  "version": 1,
+  "description": "Typed config contract for OpenClaw platform env files",
+  "variables": [
+    {
+      "name": "AZURE_ENVIRONMENT",
+      "scope": "shared",
+      "type": "enum",
+      "required": true,
+      "allowed": ["dev", "stage", "prod"]
+    },
+    {
+      "name": "AZURE_LOCATION",
+      "scope": "shared",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "AZURE_OWNER_SLUG",
+      "scope": "shared",
+      "type": "string",
+      "required": false
+    },
+    {
+      "name": "AZURE_RESOURCE_GROUP",
+      "scope": "shared",
+      "type": "string",
+      "required": false
+    },
+    {
+      "name": "AZURE_CONTAINERAPPS_ENV",
+      "scope": "shared",
+      "type": "string",
+      "required": false
+    },
+    {
+      "name": "AZURE_ACR_NAME",
+      "scope": "shared",
+      "type": "string",
+      "required": false
+    },
+    {
+      "name": "AZURE_KEY_VAULT_NAME",
+      "scope": "shared",
+      "type": "string",
+      "required": false
+    },
+    {
+      "name": "NFS_SA_NAME",
+      "scope": "shared",
+      "type": "string",
+      "required": false
+    },
+    {
+      "name": "CAE_NFS_STORAGE_NAME",
+      "scope": "shared",
+      "type": "string",
+      "required": false
+    },
+    {
+      "name": "TF_STATE_RG",
+      "scope": "shared",
+      "type": "string",
+      "required": false
+    },
+    {
+      "name": "TF_STATE_SA",
+      "scope": "shared",
+      "type": "string",
+      "required": false
+    },
+    {
+      "name": "IMAGE_TAG",
+      "scope": "shared",
+      "type": "string",
+      "required": false
+    },
+    {
+      "name": "COMPASS_BASE_URL",
+      "scope": "shared",
+      "type": "url",
+      "required": true
+    },
+    {
+      "name": "COMPASS_API_KEY",
+      "scope": "shared",
+      "type": "secret",
+      "required": true
+    },
+    {
+      "name": "OPENCLAW_GATEWAY_AUTH_TOKEN",
+      "scope": "shared",
+      "type": "secret",
+      "required": true
+    },
+    {
+      "name": "TAVILY_API_KEY",
+      "scope": "shared",
+      "type": "secret",
+      "required": false
+    },
+    {
+      "name": "CAE_INTERNAL_ONLY",
+      "scope": "shared",
+      "type": "bool",
+      "required": false
+    },
+    {
+      "name": "MSTEAMS_RELAY_ENABLED",
+      "scope": "shared",
+      "type": "bool",
+      "required": false
+    },
+    {
+      "name": "MSTEAMS_TENANT_ID",
+      "scope": "shared",
+      "type": "string",
+      "required": false
+    },
+    {
+      "name": "MSTEAMS_APP_ID",
+      "scope": "shared",
+      "type": "string",
+      "required": false
+    },
+    {
+      "name": "MSTEAMS_APP_SECRET_VALUE",
+      "scope": "shared",
+      "type": "secret",
+      "required": false
+    },
+    {
+      "name": "MSTEAMS_USER_SLUG_MAP",
+      "scope": "shared",
+      "type": "json_object",
+      "required": false
+    },
+    {
+      "name": "SIGNAL_BOT_NUMBER",
+      "scope": "shared",
+      "type": "e164",
+      "required": false
+    },
+    {
+      "name": "SIGNAL_PROXY_AUTH_TOKEN",
+      "scope": "shared",
+      "type": "secret",
+      "required": false
+    },
+    {
+      "name": "SIGNAL_CLI_URL",
+      "scope": "shared",
+      "type": "url",
+      "required": false
+    },
+    {
+      "name": "GRAPH_MCP_URL",
+      "scope": "shared",
+      "type": "url",
+      "required": false
+    },
+    {
+      "name": "SIGNAL_USER_PHONE",
+      "scope": "user",
+      "type": "e164",
+      "required": false
+    },
+    {
+      "name": "COMPASS_API_KEY",
+      "scope": "user",
+      "type": "secret",
+      "required": false
+    },
+    {
+      "name": "OPENCLAW_GATEWAY_AUTH_TOKEN",
+      "scope": "user",
+      "type": "secret",
+      "required": false
+    },
+    {
+      "name": "TAVILY_API_KEY",
+      "scope": "user",
+      "type": "secret",
+      "required": false
+    },
+    {
+      "name": "MSTEAMS_ENABLED",
+      "scope": "user",
+      "type": "bool",
+      "required": false
+    }
+  ]
+}

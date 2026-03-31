@@ -17,7 +17,7 @@ Then alert the user.
 ## Every heartbeat
 
 - Update `memory/heartbeat-state.json` timestamps for checks performed.
-- **System health**: verify the gateway process is running (`pgrep -f "openclaw gateway"` or equivalent). Also check internal health port: `curl -sf http://localhost:18792/` should return `OK` (HTTP 200). Alert only on failure. Note: port 8082 does NOT exist — do not check it.
+- **System health**: verify the gateway process is running (`pgrep -f "openclaw gateway"` or equivalent). Also check gateway reachability on the actual bind port: `curl -sf http://localhost:18789/` should return HTTP 200. Alert only on failure. Note: ports 18792 and 8082 do NOT exist — do not check them.
 - **Error log scan**: check `.learnings/ERRORS.md` (if it exists) for new entries since last heartbeat. Summarise anything new in the daily note.
 - **Persistent failure check**: if the same error has appeared in 3+ consecutive heartbeats, alert the user once.
 

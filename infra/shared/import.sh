@@ -6,7 +6,7 @@ ENV=$1
 LOCATION=$2
 OWNER=$3
 
-RG_NAME="rg-openclaw-shared-${ENV}"
+RG_NAME="rg-openclaw-${ENV}"
 TF_VARS="-var=environment=${ENV} -var=location=${LOCATION} -var=owner_slug=${OWNER}"
 
 import_if_exists() {
@@ -32,7 +32,7 @@ if az group show --name $RG_NAME >/dev/null 2>&1; then
     "Resource Group"
 
   # Virtual Network
-  VNET_NAME="vnet-openclaw-shared-${ENV}"
+  VNET_NAME="vnet-openclaw-${ENV}"
   if az network vnet show --name $VNET_NAME --resource-group $RG_NAME >/dev/null 2>&1; then
     import_if_exists "azurerm_virtual_network.shared" \
       "/subscriptions/${SUB_ID}/resourceGroups/${RG_NAME}/providers/Microsoft.Network/virtualNetworks/${VNET_NAME}" \
@@ -68,7 +68,7 @@ if az group show --name $RG_NAME >/dev/null 2>&1; then
   fi
 
   # Managed Identity
-  ID_NAME="id-openclaw-shared-${ENV}"
+  ID_NAME="id-openclaw-${ENV}"
   if az identity show --name $ID_NAME --resource-group $RG_NAME >/dev/null 2>&1; then
     import_if_exists "azurerm_user_assigned_identity.shared" \
       "/subscriptions/${SUB_ID}/resourceGroups/${RG_NAME}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/${ID_NAME}" \
@@ -76,7 +76,7 @@ if az group show --name $RG_NAME >/dev/null 2>&1; then
   fi
 
   # Log Analytics
-  LAW_NAME="law-openclaw-shared-${ENV}"
+  LAW_NAME="law-openclaw-${ENV}"
   if az monitor log-analytics workspace show --resource-group $RG_NAME --workspace-name $LAW_NAME >/dev/null 2>&1; then
     import_if_exists "azurerm_log_analytics_workspace.shared" \
       "/subscriptions/${SUB_ID}/resourceGroups/${RG_NAME}/providers/Microsoft.OperationalInsights/workspaces/${LAW_NAME}" \
@@ -84,15 +84,18 @@ if az group show --name $RG_NAME >/dev/null 2>&1; then
   fi
 
   # Container Apps Environment
-  CAE_NAME="cae-openclaw-shared-${ENV}"
-  if az containerapp env show --name $CAE_NAME --resource-group $RG_NAME >/dev/null 2>&1; then
+  CAE_NAME="cae-openclaw-${ENV}"
+  CAE_STATE=$(az containerapp env show --name $CAE_NAME --resource-group $RG_NAME --query "properties.provisioningState" -o tsv 2>/dev/null || echo "NotFound")
+  if [ "$CAE_STATE" = "Succeeded" ]; then
     import_if_exists "azurerm_container_app_environment.shared" \
       "/subscriptions/${SUB_ID}/resourceGroups/${RG_NAME}/providers/Microsoft.App/managedEnvironments/${CAE_NAME}" \
       "Container Apps Environment"
+  else
+    echo "Container Apps Environment: state=$CAE_STATE, skipping import."
   fi
 
   # ACR
-  ACR_NAME="openclawshared${ENV}acr"
+  ACR_NAME="${ACR_NAME:-acropenclaw${ENV}}"
   if az acr show --name $ACR_NAME --resource-group $RG_NAME >/dev/null 2>&1; then
     import_if_exists "azurerm_container_registry.shared" \
       "/subscriptions/${SUB_ID}/resourceGroups/${RG_NAME}/providers/Microsoft.ContainerRegistry/registries/${ACR_NAME}" \
@@ -100,7 +103,7 @@ if az group show --name $RG_NAME >/dev/null 2>&1; then
   fi
 
   # Key Vault
-  KV_NAME="kvopenclawshared${ENV}"
+  KV_NAME="kvopenclaw${ENV}"
   if az keyvault show --name $KV_NAME --resource-group $RG_NAME >/dev/null 2>&1; then
     import_if_exists "azurerm_key_vault.shared" \
       "/subscriptions/${SUB_ID}/resourceGroups/${RG_NAME}/providers/Microsoft.KeyVault/vaults/${KV_NAME}" \
@@ -108,7 +111,7 @@ if az group show --name $RG_NAME >/dev/null 2>&1; then
   fi
 
   # Storage Account (general purpose)
-  SA_NAME="stopenclawshared${ENV}"
+  SA_NAME="${SA_NAME:-stocopenclaw${ENV}}"
   if az storage account show --name $SA_NAME --resource-group $RG_NAME >/dev/null 2>&1; then
     import_if_exists "azurerm_storage_account.shared" \
       "/subscriptions/${SUB_ID}/resourceGroups/${RG_NAME}/providers/Microsoft.Storage/storageAccounts/${SA_NAME}" \
@@ -116,7 +119,7 @@ if az group show --name $RG_NAME >/dev/null 2>&1; then
   fi
 
   # NFS Storage Account
-  SA_NFS_NAME="nfsopenclawshared${ENV}"
+  SA_NFS_NAME="nfsopenclaw${ENV}"
   if az storage account show --name $SA_NFS_NAME --resource-group $RG_NAME >/dev/null 2>&1; then
     import_if_exists "azurerm_storage_account.nfs" \
       "/subscriptions/${SUB_ID}/resourceGroups/${RG_NAME}/providers/Microsoft.Storage/storageAccounts/${SA_NFS_NAME}" \

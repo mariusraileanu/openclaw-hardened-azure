@@ -6,7 +6,7 @@
 #   docker manifest inspect ghcr.io/openclaw/openclaw:latest
 #   docker inspect ghcr.io/openclaw/openclaw:latest --format='{{index .RepoDigests 0}}'
 
-FROM ghcr.io/openclaw/openclaw@sha256:7091859602df6b8cdd59b38adbaed723a6d94806fdd4274d488400dd2fcf0fb6
+FROM ghcr.io/openclaw/openclaw:2026.3.28
 
 USER root
 
@@ -23,12 +23,13 @@ RUN ln -sf /app/openclaw.mjs /usr/local/bin/openclaw
 
 # Copy enterprise baseline configuration, workspace template, proxy, and entrypoint
 COPY openclaw.json.example /app/config/openclaw.json.example
+COPY scripts/build-openclaw-config.py /app/scripts/build-openclaw-config.py
 COPY workspace/ /app/config/workspace/
 COPY loopback-proxy.mjs /app/loopback-proxy.mjs
 COPY entrypoint.sh /app/entrypoint.sh
 
 # Ensure entrypoint is executable
-RUN chmod +x /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh /app/scripts/build-openclaw-config.py
 
 USER 1000:1000
 

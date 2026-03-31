@@ -51,12 +51,24 @@
   },
   "channels": {
     "signal": {
-      "enabled": true,
+      "enabled": false,
       "account": "${SIGNAL_BOT_NUMBER}",
       "httpUrl": "${SIGNAL_HTTP_URL}",
       "autoStart": false,
       "dmPolicy": "allowlist",
       "allowFrom": ["${SIGNAL_USER_PHONE}"]
+    },
+    "msteams": {
+      "enabled": true,
+      "appId": "${MSTEAMS_APP_ID}",
+      "appPassword": "${MSTEAMS_APP_PASSWORD}",
+      "tenantId": "${MSTEAMS_TENANT_ID}",
+      "webhook": {
+        "port": 3978,
+        "path": "/api/messages"
+      },
+      "requireMention": true,
+      "replyStyle": "thread"
     }
   }
 }

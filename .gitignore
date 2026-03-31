@@ -8,17 +8,29 @@
 *.tfvars
 !*.tfvars.example
 
-# Azure exports / test artifacts
+# Node.js
+node_modules/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Build output / test artifacts
 test-mcp.yaml
+teams-app/dist/
+teams-relay/dist/
+
+# Azure Functions local settings (may contain connection strings)
+local.settings.json
 
 # Secrets — never commit
 *.pem
 *.key
 .env
 .env.*
-!.env.example
-!.env.azure.example
-!.env.user.example
+config/**/*.env
+!config/**/*.example.env
+!config/.gitkeep
 secrets.auto.tfvars
 
 # Compiled binaries

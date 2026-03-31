@@ -47,6 +47,12 @@ variable "subnet_pe_cidr" {
   default     = "10.0.8.0/24"
 }
 
+variable "cae_internal_only" {
+  description = "When true, the Container Apps Environment uses an internal-only load balancer (no public endpoints). Set to false to allow per-app external_enabled=true for channels like Microsoft Teams that require public webhook endpoints."
+  type        = bool
+  default     = true
+}
+
 # ---------------------------------------------------------------------------
 # Signal-CLI Daemon (shared messaging relay)
 # ---------------------------------------------------------------------------
@@ -104,6 +110,67 @@ variable "signal_proxy_auth_token" {
 
 variable "signal_bot_number" {
   description = "Registered Signal bot phone number (e.g. +15551234567). Used as --account flag for signal-cli single-account mode."
+  type        = string
+  default     = ""
+}
+
+# ---------------------------------------------------------------------------
+# Microsoft Teams Webhook Relay (Azure Function)
+# ---------------------------------------------------------------------------
+variable "msteams_relay_enabled" {
+  description = "Deploy the shared Teams webhook relay Azure Function and shared bot. Required when any user has msteams_enabled=true."
+  type        = bool
+  default     = false
+}
+
+variable "msteams_app_id" {
+  description = "Azure AD App Registration client ID for the shared Teams bot. Required when msteams_relay_enabled is true."
+  type        = string
+  default     = ""
+}
+
+variable "msteams_app_secret_value" {
+  description = "Client secret for the shared Teams bot App Registration. Stored in Key Vault."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "msteams_tenant_id" {
+  description = "Azure AD tenant ID for the shared Teams bot. Required when msteams_relay_enabled is true."
+  type        = string
+  default     = ""
+}
+
+variable "msteams_user_slug_map" {
+  description = "JSON object mapping Azure AD Object IDs (lowercase) to user slugs for relay routing. Example: {\"38293292-f32d-42ef-a706-756ef42bfa91\":\"mlucian\"}"
+  type        = string
+  default     = "{}"
+}
+
+variable "subnet_func_cidr" {
+  description = "CIDR for the Azure Functions VNet integration subnet (/27 minimum)"
+  type        = string
+  default     = "10.0.9.0/27"
+}
+
+# ---------------------------------------------------------------------------
+# Name overrides (for globally-unique Azure names that conflict)
+# ---------------------------------------------------------------------------
+variable "acr_name" {
+  description = "Override the ACR name (must be globally unique). Defaults to openclaw{env}acr."
+  type        = string
+  default     = ""
+}
+
+variable "sa_name" {
+  description = "Override the general storage account name (must be globally unique). Defaults to stopenclaw{env}."
+  type        = string
+  default     = ""
+}
+
+variable "func_relay_name" {
+  description = "Override the Function App name (must be globally unique). Defaults to func-relay-{env}."
   type        = string
   default     = ""
 }

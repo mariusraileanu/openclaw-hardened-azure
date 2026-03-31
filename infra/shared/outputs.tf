@@ -80,7 +80,7 @@ output "nfs_share_name" {
 
 output "cae_nfs_storage_name" {
   description = "Name of the NFS storage mount registered in the Container Apps Environment"
-  value       = "openclaw-nfs"
+  value       = "openclaw-nfs-${var.environment}"
 }
 
 output "vnet_id" {
@@ -135,4 +135,37 @@ output "signal_proxy_auth_token" {
   description = "Auth token for the signal routing proxy. Passed to user containers as a separate env var and appended as ?token= query parameter."
   sensitive   = true
   value       = var.signal_proxy_auth_token
+}
+
+# ---------------------------------------------------------------------------
+# Microsoft Teams Webhook Relay + Shared Bot
+# ---------------------------------------------------------------------------
+output "teams_relay_hostname" {
+  description = "Public hostname of the Teams webhook relay Function App (empty if relay disabled)"
+  value       = var.msteams_relay_enabled ? azurerm_function_app_flex_consumption.relay[0].default_hostname : ""
+}
+
+output "teams_relay_enabled" {
+  description = "Whether the Teams relay Function App is deployed"
+  value       = var.msteams_relay_enabled
+}
+
+output "msteams_app_id" {
+  description = "Shared Teams bot App Registration client ID (empty if bot not deployed)"
+  value       = local.msteams_bot_enabled ? var.msteams_app_id : ""
+}
+
+output "msteams_app_password_secret_id" {
+  description = "Key Vault secret versionless ID for the shared bot password (empty if bot not deployed)"
+  value       = local.msteams_bot_enabled && var.msteams_app_secret_value != "" ? azurerm_key_vault_secret.msteams_app_password[0].versionless_id : ""
+}
+
+output "msteams_bot_name" {
+  description = "Name of the shared Azure Bot Service resource (empty if bot not deployed)"
+  value       = local.msteams_bot_enabled ? azurerm_bot_service_azure_bot.shared[0].name : ""
+}
+
+output "msteams_tenant_id" {
+  description = "Azure AD tenant ID for the shared Teams bot (empty if not configured)"
+  value       = var.msteams_tenant_id
 }

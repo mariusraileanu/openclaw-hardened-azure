@@ -1,0 +1,21 @@
+{
+  "name": "teams-webhook-relay",
+  "version": "1.0.0",
+  "description": "Stateless HTTP relay — forwards Teams Bot Framework webhooks from the public Azure Function endpoint to internal Container Apps.",
+  "main": "dist/src/functions/*.js",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "prestart": "npm run build",
+    "start": "func start"
+  },
+  "dependencies": {
+    "@azure/functions": "^4.0.0",
+    "cookie": "^1.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "azure-functions-core-tools": "^4.0.0",
+    "typescript": "^5.0.0"
+  }
+}

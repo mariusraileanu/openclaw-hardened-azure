@@ -4,6 +4,7 @@
 .ruff_cache
 infra
 signal-proxy
+teams-relay
 *.md
 !openclaw.json.example
 !workspace/**/*.md

@@ -20,16 +20,19 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# Load per-environment env file (same pattern as Makefile / platform-reset.sh)
+# Load per-environment layered config (same pattern as Makefile / platform-reset.sh)
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 _ENV="${AZURE_ENVIRONMENT:-dev}"
-if [[ -f "${REPO_ROOT}/.env.azure.${_ENV}" ]]; then
+if [[ -f "${REPO_ROOT}/config/env/${_ENV}.env" ]]; then
   set -a
   # shellcheck disable=SC1090
-  source "${REPO_ROOT}/.env.azure.${_ENV}"
+  source "${REPO_ROOT}/config/env/${_ENV}.env"
+  if [[ -f "${REPO_ROOT}/config/local/${_ENV}.env" ]]; then
+    source "${REPO_ROOT}/config/local/${_ENV}.env"
+  fi
   set +a
 fi
 

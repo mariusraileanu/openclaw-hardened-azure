@@ -1,0 +1,356 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCRIPTS_DIR = REPO_ROOT / "platform" / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from config_ops import bootstrap_config
+from deploy_ops import deploy_shared, deploy_user, import_user, remove_user
+from doctor_ops import doctor
+from observability_ops import logs, status
+from reset_ops import reset
+from signal_ops import (
+    signal_build,
+    signal_deploy,
+    signal_logs_cli,
+    signal_logs_proxy,
+    signal_register,
+    signal_status,
+    signal_update_phones,
+)
+from teams_ops import (
+    teams_manifest,
+    teams_manifest_all,
+    teams_package,
+    teams_relay_build,
+    teams_relay_deploy,
+    teams_release_check,
+    teams_validate,
+)
+
+
+def _print_error(code: str, message: str) -> None:
+    print(f"ERROR[{code}]: {message}", file=sys.stderr)
+
+
+def _run_op(func, *args) -> int:
+    try:
+        return func(*args)
+    except FileNotFoundError as exc:
+        _print_error("CONFIG_MISSING", str(exc))
+        return 2
+    except RuntimeError as exc:
+        message = str(exc)
+        lowered = message.lower()
+        code = "RUNTIME"
+        if "azure cli session is not active" in lowered or "refresh azure auth" in lowered:
+            code = "AZ_AUTH"
+        elif "missing required shared config keys" in lowered:
+            code = "CONFIG_REQUIRED"
+        elif "naming contract" in lowered:
+            code = "NAMING"
+        _print_error(code, message)
+        return 1
+    except Exception as exc:
+        _print_error("UNEXPECTED", str(exc))
+        return 99
+
+
+def run(cmd: list[str]) -> int:
+    result = subprocess.run(cmd, cwd=REPO_ROOT)
+    return result.returncode
+
+
+def run_make(target: str, env_name: str, user: str | None = None) -> int:
+    command = ["make", target, f"ENV={env_name}"]
+    if user:
+        command.append(f"U={user}")
+    return run(command)
+
+
+def cmd_config_bootstrap(args: argparse.Namespace) -> int:
+    return bootstrap_config(REPO_ROOT, args.env, args.user)
+
+
+def cmd_config_validate(args: argparse.Namespace) -> int:
+    command = ["./scripts/validate-config.py", "--env", args.env]
+    if args.user:
+        command.extend(["--user", args.user])
+    return run(command)
+
+
+def cmd_deploy_shared(args: argparse.Namespace) -> int:
+    return _run_op(deploy_shared, REPO_ROOT, args.env, args.plan, args.destroy)
+
+
+def cmd_deploy_user(args: argparse.Namespace) -> int:
+    return _run_op(deploy_user, REPO_ROOT, args.env, args.user, args.plan)
+
+
+def cmd_user_remove(args: argparse.Namespace) -> int:
+    return _run_op(remove_user, REPO_ROOT, args.env, args.user)
+
+
+def cmd_user_import(args: argparse.Namespace) -> int:
+    return _run_op(
+        import_user,
+        REPO_ROOT,
+        args.env,
+        args.user,
+        args.resource,
+        args.azure_id,
+    )
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    return _run_op(status, REPO_ROOT, args.env, args.user)
+
+
+def cmd_logs(args: argparse.Namespace) -> int:
+    return _run_op(logs, REPO_ROOT, args.env, args.user)
+
+
+def cmd_reset(args: argparse.Namespace) -> int:
+    return _run_op(
+        reset, REPO_ROOT, args.env, args.force, args.nuke_only, args.rebuild_only
+    )
+
+
+def cmd_signal_build(args: argparse.Namespace) -> int:
+    return _run_op(signal_build, REPO_ROOT, args.env)
+
+
+def cmd_signal_deploy(args: argparse.Namespace) -> int:
+    return _run_op(signal_deploy, REPO_ROOT, args.env, args.plan)
+
+
+def cmd_signal_status(args: argparse.Namespace) -> int:
+    return _run_op(signal_status, REPO_ROOT, args.env)
+
+
+def cmd_signal_logs_cli(args: argparse.Namespace) -> int:
+    return _run_op(signal_logs_cli, REPO_ROOT, args.env)
+
+
+def cmd_signal_logs_proxy(args: argparse.Namespace) -> int:
+    return _run_op(signal_logs_proxy, REPO_ROOT, args.env)
+
+
+def cmd_signal_register(args: argparse.Namespace) -> int:
+    return _run_op(signal_register, REPO_ROOT, args.env)
+
+
+def cmd_signal_update_phones(args: argparse.Namespace) -> int:
+    return _run_op(signal_update_phones, REPO_ROOT, args.env)
+
+
+def cmd_teams_relay_build(args: argparse.Namespace) -> int:
+    return _run_op(teams_relay_build, REPO_ROOT, args.env)
+
+
+def cmd_teams_relay_deploy(args: argparse.Namespace) -> int:
+    return _run_op(teams_relay_deploy, REPO_ROOT, args.env)
+
+
+def cmd_teams_manifest(args: argparse.Namespace) -> int:
+    return _run_op(teams_manifest, REPO_ROOT, args.env)
+
+
+def cmd_teams_manifest_all(args: argparse.Namespace) -> int:
+    return _run_op(teams_manifest_all, REPO_ROOT)
+
+
+def cmd_teams_validate(args: argparse.Namespace) -> int:
+    return _run_op(teams_validate, REPO_ROOT, args.env)
+
+
+def cmd_teams_package(args: argparse.Namespace) -> int:
+    return _run_op(teams_package, REPO_ROOT, args.env)
+
+
+def cmd_teams_release_check(args: argparse.Namespace) -> int:
+    return _run_op(teams_release_check, REPO_ROOT)
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    return _run_op(doctor, REPO_ROOT, args.env, args.user)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="ocp", description="OpenClaw platform CLI")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    config_parser = subparsers.add_parser("config", help="Config operations")
+    config_sub = config_parser.add_subparsers(dest="config_cmd", required=True)
+
+    config_bootstrap = config_sub.add_parser(
+        "bootstrap", help="Create missing env files from templates"
+    )
+    config_bootstrap.add_argument("--env", default="dev")
+    config_bootstrap.add_argument("--user")
+    config_bootstrap.set_defaults(func=cmd_config_bootstrap)
+
+    config_validate = config_sub.add_parser(
+        "validate", help="Validate env files against schema"
+    )
+    config_validate.add_argument("--env", default="dev")
+    config_validate.add_argument("--user")
+    config_validate.set_defaults(func=cmd_config_validate)
+
+    deploy_parser = subparsers.add_parser("deploy", help="Deploy operations")
+    deploy_sub = deploy_parser.add_subparsers(dest="deploy_cmd", required=True)
+
+    deploy_shared = deploy_sub.add_parser("shared", help="Deploy shared infrastructure")
+    deploy_shared.add_argument("--env", default="dev")
+    deploy_shared.add_argument("--plan", action="store_true")
+    deploy_shared.add_argument("--destroy", action="store_true")
+    deploy_shared.set_defaults(func=cmd_deploy_shared)
+
+    deploy_user = deploy_sub.add_parser("user", help="Deploy user application")
+    deploy_user.add_argument("--env", default="dev")
+    deploy_user.add_argument("--user", required=True)
+    deploy_user.add_argument("--plan", action="store_true")
+    deploy_user.set_defaults(func=cmd_deploy_user)
+
+    user_parser = subparsers.add_parser("user", help="User lifecycle operations")
+    user_sub = user_parser.add_subparsers(dest="user_cmd", required=True)
+
+    user_remove = user_sub.add_parser("remove", help="Remove user application")
+    user_remove.add_argument("--env", default="dev")
+    user_remove.add_argument("--user", required=True)
+    user_remove.set_defaults(func=cmd_user_remove)
+
+    user_import = user_sub.add_parser(
+        "import", help="Import existing Azure resource into user Terraform state"
+    )
+    user_import.add_argument("--env", default="dev")
+    user_import.add_argument("--user", required=True)
+    user_import.add_argument("--resource", required=True)
+    user_import.add_argument("--azure-id", required=True)
+    user_import.set_defaults(func=cmd_user_import)
+
+    status_parser = subparsers.add_parser("status", help="Show app status")
+    status_parser.add_argument("--env", default="dev")
+    status_parser.add_argument("--user")
+    status_parser.set_defaults(func=cmd_status)
+
+    logs_parser = subparsers.add_parser("logs", help="Tail user logs")
+    logs_parser.add_argument("--env", default="dev")
+    logs_parser.add_argument("--user", required=True)
+    logs_parser.set_defaults(func=cmd_logs)
+
+    reset_parser = subparsers.add_parser("reset", help="Platform reset operations")
+    reset_parser.add_argument("--env", default="dev")
+    reset_parser.add_argument("--force", action="store_true")
+    group = reset_parser.add_mutually_exclusive_group()
+    group.add_argument("--nuke-only", action="store_true")
+    group.add_argument("--rebuild-only", action="store_true")
+    reset_parser.set_defaults(func=cmd_reset)
+
+    signal_parser = subparsers.add_parser("signal", help="Signal stack operations")
+    signal_sub = signal_parser.add_subparsers(dest="signal_cmd", required=True)
+
+    signal_build_cmd = signal_sub.add_parser("build", help="Build signal-proxy image")
+    signal_build_cmd.add_argument("--env", default="dev")
+    signal_build_cmd.set_defaults(func=cmd_signal_build)
+
+    signal_deploy_cmd = signal_sub.add_parser(
+        "deploy", help="Deploy signal stack (shared infra + proxy)"
+    )
+    signal_deploy_cmd.add_argument("--env", default="dev")
+    signal_deploy_cmd.add_argument("--plan", action="store_true")
+    signal_deploy_cmd.set_defaults(func=cmd_signal_deploy)
+
+    signal_status_cmd = signal_sub.add_parser("status", help="Show signal stack status")
+    signal_status_cmd.add_argument("--env", default="dev")
+    signal_status_cmd.set_defaults(func=cmd_signal_status)
+
+    signal_logs_cli_cmd = signal_sub.add_parser("logs-cli", help="Tail signal-cli logs")
+    signal_logs_cli_cmd.add_argument("--env", default="dev")
+    signal_logs_cli_cmd.set_defaults(func=cmd_signal_logs_cli)
+
+    signal_logs_proxy_cmd = signal_sub.add_parser(
+        "logs-proxy", help="Tail signal-proxy logs"
+    )
+    signal_logs_proxy_cmd.add_argument("--env", default="dev")
+    signal_logs_proxy_cmd.set_defaults(func=cmd_signal_logs_proxy)
+
+    signal_register_cmd = signal_sub.add_parser(
+        "register", help="Open shell in signal-cli for phone registration"
+    )
+    signal_register_cmd.add_argument("--env", default="dev")
+    signal_register_cmd.set_defaults(func=cmd_signal_register)
+
+    signal_update_cmd = signal_sub.add_parser(
+        "update-phones", help="Sync SIGNAL_KNOWN_PHONES on signal-proxy"
+    )
+    signal_update_cmd.add_argument("--env", default="dev")
+    signal_update_cmd.set_defaults(func=cmd_signal_update_phones)
+
+    teams_parser = subparsers.add_parser("teams", help="Teams relay operations")
+    teams_sub = teams_parser.add_subparsers(dest="teams_cmd", required=True)
+
+    teams_relay_build_cmd = teams_sub.add_parser(
+        "relay-build", help="Build the Teams relay Function App"
+    )
+    teams_relay_build_cmd.add_argument("--env", default="dev")
+    teams_relay_build_cmd.set_defaults(func=cmd_teams_relay_build)
+
+    teams_relay_deploy_cmd = teams_sub.add_parser(
+        "relay-deploy", help="Deploy Teams relay infra and build artifacts"
+    )
+    teams_relay_deploy_cmd.add_argument("--env", default="dev")
+    teams_relay_deploy_cmd.set_defaults(func=cmd_teams_relay_deploy)
+
+    teams_manifest_cmd = teams_sub.add_parser(
+        "manifest", help="Render Teams manifest for one environment"
+    )
+    teams_manifest_cmd.add_argument("--env", default="dev")
+    teams_manifest_cmd.set_defaults(func=cmd_teams_manifest)
+
+    teams_manifest_all_cmd = teams_sub.add_parser(
+        "manifest-all", help="Render Teams manifests for dev/stage/prod"
+    )
+    teams_manifest_all_cmd.set_defaults(func=cmd_teams_manifest_all)
+
+    teams_validate_cmd = teams_sub.add_parser(
+        "validate", help="Validate Teams manifest for one environment"
+    )
+    teams_validate_cmd.add_argument("--env", default="dev")
+    teams_validate_cmd.set_defaults(func=cmd_teams_validate)
+
+    teams_package_cmd = teams_sub.add_parser(
+        "package", help="Build Teams package zip for one environment"
+    )
+    teams_package_cmd.add_argument("--env", default="dev")
+    teams_package_cmd.set_defaults(func=cmd_teams_package)
+
+    teams_release_check_cmd = teams_sub.add_parser(
+        "release-check", help="Run full Teams local release gate"
+    )
+    teams_release_check_cmd.set_defaults(func=cmd_teams_release_check)
+
+    doctor_parser = subparsers.add_parser("doctor", help="Run local preflight diagnostics")
+    doctor_parser.add_argument("--env", default="dev")
+    doctor_parser.add_argument("--user")
+    doctor_parser.set_defaults(func=cmd_doctor)
+
+    return parser
+
+
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

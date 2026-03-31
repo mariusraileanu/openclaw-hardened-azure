@@ -1,0 +1,14 @@
+{
+  "version": "1.0.3",
+  "name": {
+    "short": "OpenClaw",
+    "full": "OpenClaw Production Bot"
+  },
+  "description": {
+    "short": "AI assistant for Department of Health",
+    "full": "OpenClaw AI assistant for Microsoft Teams production use."
+  },
+  "validDomains": [
+    "func-relay-openclaw-prod.azurewebsites.net"
+  ]
+}

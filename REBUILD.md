@@ -8,8 +8,8 @@ Use this when a destructive infrastructure change is required
 
 - Azure CLI authenticated (`az login`)
 - Terraform 1.5+ installed
-- `.env.azure.<env>` populated (see `.env.azure.example`)
-- `.env.user.<slug>` for each user (see `.env.user.example`)
+- Layered config populated under `config/` (`make config-bootstrap ENV=<env> U=<slug>`)
+- Per-user overlays in `config/users/<slug>.env` (see `config/users/user.example.env`)
 - Your public IPs for deployer allowlisting (see Step 5)
 
 ## Why a full rebuild?
@@ -36,13 +36,12 @@ NFS: Premium FileStorage, 100 GB share mounted into CAE via NfsAzureFile
 
 ### NFS Storage
 
-- **azurerm provider v3.x does NOT support NFS.** The
+- **azurerm provider does NOT fully support NFS.** The
   `azurerm_container_app_environment_storage` resource only creates SMB
-  (AzureFile) mounts. NFS mounts require `null_resource` + CLI
-  (`az containerapp env storage set --storage-type NfsAzureFile`).
+  (AzureFile) mounts. NFS mounts are applied with Terraform AzAPI resources.
 - **azurerm_container_app `storage_type` only accepts
-  `AzureFile|EmptyDir|Secret`.** NfsAzureFile is patched via REST API
-  after creation (`null_resource.nfs_volume_patch`). The container app
+  `AzureFile|EmptyDir|Secret`.** NfsAzureFile is patched via AzAPI
+  after creation. The container app
   uses `lifecycle { ignore_changes = [template[0].volume] }` to prevent
   Terraform from reverting it.
 - **NFS FileStorage with `default_action = Deny` blocks Terraform
@@ -102,7 +101,7 @@ The `ca-graph-mcp-gw-<slug>` container app is NOT in Terraform state.
 
 ```bash
 # Export its config for later recreation
-az containerapp show -n ca-graph-mcp-gw-<slug> -g rg-openclaw-shared-<env> -o json > /tmp/graph-mcp-backup.json
+az containerapp show -n ca-graph-mcp-gw-<slug> -g rg-openclaw-<env> -o json > /tmp/graph-mcp-backup.json
 ```
 
 Key details for manual recreation:
@@ -116,7 +115,7 @@ Key details for manual recreation:
 
 ### 1. Destroy user container apps (Terraform-managed)
 
-For each user with a `.env.user.<slug>` file:
+For each user with a `config/users/<slug>.env` file:
 
 ```bash
 make remove-user U=alice
@@ -128,7 +127,7 @@ This removes `ca-openclaw-<env>-<slug>` and its KV secrets.
 ### 2. Delete non-Terraform container apps manually
 
 ```bash
-az containerapp delete -n ca-graph-mcp-gw-<slug> -g rg-openclaw-shared-<env> --yes
+az containerapp delete -n ca-graph-mcp-gw-<slug> -g rg-openclaw-<env> --yes
 ```
 
 ### 3. Destroy shared infrastructure
@@ -223,7 +222,7 @@ This creates the full VNet-integrated platform:
 - ACR (Premium, private endpoint, deployer IPs allowed)
 - Key Vault (RBAC, private endpoint, deployer IPs allowed)
 - Storage accounts (general + NFS Premium FileStorage)
-- NFS share mounted into CAE (NfsAzureFile type, via CLI)
+- NFS share mounted into CAE (NfsAzureFile type, via Terraform AzAPI)
 - Private DNS zones + VNet links
 - Managed Identity with AcrPull + KV Secrets User
 
@@ -241,7 +240,7 @@ az acr update -n <acr-name> --default-action Deny
 
 ### 8. Deploy user container app
 
-For each user with a `.env.user.<slug>` file:
+For each user with a `config/users/<slug>.env` file:
 
 ```bash
 make add-user U=alice
@@ -249,11 +248,11 @@ make add-user U=bob
 ```
 
 The container app is created with `storage_type = "AzureFile"` (provider
-limitation), then `null_resource.nfs_volume_patch` patches it to
-`NfsAzureFile` via the REST API. Verify the volume mount is working:
+limitation), then Terraform AzAPI resources patch it to
+`NfsAzureFile`. Verify the volume mount is working:
 
 ```bash
-az containerapp show -n ca-openclaw-<slug> -g rg-openclaw-shared-<env> \
+az containerapp show -n ca-openclaw-<slug> -g rg-openclaw-<env> \
   --query "properties.template.volumes" -o table
 ```
 
@@ -264,8 +263,8 @@ Recreate `ca-graph-mcp-gw-<slug>` manually:
 ```bash
 az containerapp create \
   --name ca-graph-mcp-gw-<slug> \
-  --resource-group rg-openclaw-shared-<env> \
-  --environment cae-openclaw-shared-<env> \
+  --resource-group rg-openclaw-<env> \
+  --environment cae-openclaw-<env> \
   --image <acr-name>.azurecr.io/graph-mcp-gateway:latest \
   --cpu 0.25 --memory 0.5Gi \
   --min-replicas 1 --max-replicas 1 \
@@ -300,15 +299,15 @@ and Storage. All traffic must then go through private endpoints.
 
 ## Automated rebuild
 
-For a scripted version of the above, see `platform-reset.sh`. It discovers all users from `.env.user.*` files automatically — no `--user` flag needed.
+For a scripted version of the above, use `ocp reset`. It discovers all users from `config/users/*.env` files automatically — no `--user` flag needed.
 
 ```bash
-./platform-reset.sh                    # interactive mode (prompts before destructive steps)
-./platform-reset.sh -f                 # non-interactive (no prompts, use in CI)
-./platform-reset.sh -e prod            # target prod environment
-./platform-reset.sh -e prod -f         # non-interactive prod reset
-./platform-reset.sh --nuke-only        # destroy only (all users + shared)
-./platform-reset.sh --rebuild-only     # rebuild only (assumes clean state)
+./platform/cli/ocp reset --env dev
+./platform/cli/ocp reset --env dev --force
+./platform/cli/ocp reset --env prod
+./platform/cli/ocp reset --env prod --force
+./platform/cli/ocp reset --env dev --nuke-only
+./platform/cli/ocp reset --env dev --rebuild-only
 ```
 
 Or use Makefile targets:
@@ -329,7 +328,7 @@ make nuke-all ENV=prod                 # Target prod
 | `az acr build` fails with 403 | ACR Tasks agents have unpredictable IPs. Temporarily `az acr update -n <acr> --default-action Allow`, build, then restore Deny. |
 | Key Vault name conflict | Check for soft-deleted vault: `az keyvault list-deleted`. Recover with `az keyvault recover` (preferred) or purge with `az keyvault purge` (may be policy-blocked). |
 | CAE subnet conflict | Ensure old CAE is fully deleted before re-creating (can take 10-15 min). |
-| NFS share mount fails (VolumeMountFailure) | Verify storage mount type is `NfsAzureFile` not `AzureFile`. Check: `az containerapp env storage show -n <cae> -g <rg> --storage-name openclaw-nfs`. |
+| NFS share mount fails (VolumeMountFailure) | Verify storage mount type is `NfsAzureFile` not `AzureFile`. Check: `az containerapp env storage show -n <cae> -g <rg> --storage-name openclaw-nfs-<env>`. |
 | Terraform 403 on NFS file share | NFS storage firewall hasn't propagated. Temporarily `az storage account update --name <nfs-sa> --default-action Allow`, apply, restore Deny. |
 | KV firewall propagation delay | Wait 1-2 min after updating KV IP rules before Terraform operations. |
 | `workload_profile_name` perpetual drift | Already handled by `lifecycle { ignore_changes }` in container app config. |

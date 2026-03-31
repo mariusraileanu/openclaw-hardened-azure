@@ -1,0 +1,37 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.19/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.19",
+  "version": "1.0.3",
+  "id": "e7a3d250-280d-4b04-8240-8440480b90c1",
+  "developer": {
+    "name": "Department of Health - Digital",
+    "websiteUrl": "https://www.doh.gov.ae",
+    "privacyUrl": "https://www.doh.gov.ae/privacy",
+    "termsOfUseUrl": "https://www.doh.gov.ae/terms"
+  },
+  "name": {
+    "short": "OpenClaw",
+    "full": "OpenClaw Bot"
+  },
+  "description": {
+    "short": "AI assistant for Department of Health",
+    "full": "OpenClaw AI assistant for Microsoft Teams."
+  },
+  "icons": {
+    "outline": "outline.png",
+    "color": "color.png"
+  },
+  "accentColor": "#4F46E5",
+  "bots": [
+    {
+      "botId": "e7a3d250-280d-4b04-8240-8440480b90c1",
+      "needsChannelSelector": false,
+      "isNotificationOnly": false,
+      "scopes": [
+        "personal"
+      ]
+    }
+  ],
+  "permissions": [],
+  "validDomains": []
+}

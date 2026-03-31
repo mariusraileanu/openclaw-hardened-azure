@@ -11,54 +11,32 @@
 # ---------------------------------------------------------------------------
 ENV ?= dev
 U   ?=
+OCP ?= ./platform/cli/ocp
 
 # Map short-form to internal names used by scripts, Terraform, and env files.
 AZURE_ENVIRONMENT      := $(ENV)
 USER_SLUG              := $(U)
 
-# Load per-environment env file (e.g. .env.azure.dev, .env.azure.prod)
-# then per-user overrides (e.g. .env.user.alice).  Per-user values win.
-# The leading hyphen suppresses errors when a file does not exist.
-AZURE_ENV_FILE  = .env.azure.$(ENV)
-USER_ENV_FILE   = .env.user.$(U)
+# Load layered env files directly from config/.
+# Per-user values override shared values.
+AZURE_ENV_FILE        = config/env/$(ENV).env
+LOCAL_AZURE_ENV_FILE  = config/local/$(ENV).env
+USER_ENV_FILE         = config/users/$(U).env
+LOCAL_USER_ENV_FILE   = config/local/$(ENV).$(U).env
 -include $(AZURE_ENV_FILE)
+-include $(LOCAL_AZURE_ENV_FILE)
 -include $(USER_ENV_FILE)
+-include $(LOCAL_USER_ENV_FILE)
 export
 
 AZURE_LOCATION         ?= eastus
 AZURE_OWNER_SLUG       ?= platform
 
-# ---------------------------------------------------------------------------
-# Derived Names (naming contract — overridable via env file for non-standard
-# environments like prod whose resources were provisioned externally)
-# ---------------------------------------------------------------------------
-AZURE_RESOURCE_GROUP        ?= rg-openclaw-shared-$(ENV)
-AZURE_CONTAINERAPPS_ENV     ?= cae-openclaw-shared-$(ENV)
-AZURE_ACR_NAME              ?= openclawshared$(ENV)acr
-AZURE_KEY_VAULT_NAME        ?= kvopenclawshared$(ENV)
-AZURE_STORAGE_ACCOUNT_NAME  ?= stopenclawshared$(ENV)
-
-# CAE NFS mount name (registered in the Container Apps Environment)
-CAE_NFS_STORAGE_NAME        ?= openclaw-nfs
-
-IMAGE_TAG ?= latest
-IMAGE_REF ?= $(AZURE_ACR_NAME).azurecr.io/openclaw-golden:$(IMAGE_TAG)
-
-# Signal: derive proxy image ref from ACR name
-SIGNAL_PROXY_IMAGE = $(AZURE_ACR_NAME).azurecr.io/signal-proxy:$(IMAGE_TAG)
-
-# ---------------------------------------------------------------------------
-# Terraform remote state backend (provisioned by infra/bootstrap-state.sh)
-# ---------------------------------------------------------------------------
-TF_SHARED_DIR   = infra/shared
-TF_USER_DIR     = infra/user-app
-TF_STATE_RG     ?= rg-openclaw-tfstate-$(ENV)
-TF_STATE_SA     ?= tfopenclawstate$(ENV)
-
-define TF_BACKEND_CONFIG
--backend-config="resource_group_name=$(TF_STATE_RG)" \
--backend-config="storage_account_name=$(TF_STATE_SA)"
-endef
+# Lightweight defaults used by non-ocp local targets.
+AZURE_RESOURCE_GROUP ?= rg-openclaw-$(ENV)
+AZURE_ACR_NAME       ?= openclaw$(ENV)acr
+IMAGE_TAG            ?= latest
+IMAGE_REF            ?= $(AZURE_ACR_NAME).azurecr.io/openclaw-golden:$(IMAGE_TAG)
 
 # ---------------------------------------------------------------------------
 # .PHONY
@@ -66,11 +44,14 @@ endef
 .PHONY: help \
         docker-up docker-down \
         deploy deploy-plan deploy-destroy tf-bootstrap-state \
-        build-image show-image acr-login \
-        add-user add-user-plan remove-user status logs \
+        naming-check hygiene-check config-bootstrap config-audit config-validate doctor \
+        build-image show-image acr-login config-determinism-check \
+        add-user add-user-plan remove-user import-user status logs \
         signal-build signal-deploy signal-plan \
         signal-status signal-register signal-logs-cli signal-logs-proxy \
         signal-update-phones \
+        teams-manifest teams-manifest-all teams-validate teams-package teams-release-check \
+        teams-relay-build teams-relay-deploy \
         deploy-all nuke-all rebuild-all full-rebuild
 
 # ===========================================================================
@@ -80,9 +61,19 @@ endef
 help:
 	@echo "openclaw-docker-azure"
 	@echo ""
-	@echo "Config files:"
-	@echo "  Shared infra:    .env.azure.<env>   (see .env.azure.example)"
-	@echo "  Per-user:        .env.user.<slug>    (see .env.user.example)"
+	@echo "CLI:"
+	@echo "  ocp config bootstrap --env dev --user alice"
+	@echo "  ocp config validate --env dev --user alice"
+	@echo "  ocp deploy shared --env dev"
+	@echo "  ocp deploy user --env dev --user alice"
+	@echo "  ocp status --env dev --user alice"
+	@echo "  ocp logs --env dev --user alice"
+	@echo "  ocp reset --env dev --nuke-only"
+	@echo ""
+	@echo "Config source-of-truth:"
+	@echo "  Shared:          config/env/<env>.env (+ optional config/local/<env>.env)"
+	@echo "  Per-user:        config/users/<slug>.env (+ optional config/local/<env>.<slug>.env)"
+	@echo "  Templates only:  *.example.env are committed; real *.env stay local"
 	@echo ""
 	@echo "Local:"
 	@echo "  make docker-up              Build and start locally via Docker Compose"
@@ -93,11 +84,18 @@ help:
 	@echo "  make deploy-plan            Dry-run shared infra changes"
 	@echo "  make deploy-destroy         Destroy all shared infra (DANGER)"
 	@echo "  make tf-bootstrap-state     Provision remote TF state backend (run once)"
+	@echo "  make naming-check           Validate naming contract and resolved resource names"
+	@echo "  make hygiene-check          Fail if forbidden tracked files exist"
+	@echo "  make config-bootstrap [U=x] Create missing env files from templates"
+	@echo "  make config-audit [U=x]     Show expected config files and stale root env files"
+	@echo "  make config-validate [U=x] Validate env files against typed config schema"
+	@echo "  make doctor [U=x]          Run local preflight diagnostics (tools/auth/config/naming)"
 	@echo ""
 	@echo "Golden Image:"
 	@echo "  make build-image            Build & push golden image via ACR Tasks"
 	@echo "  make show-image             Print the full image reference"
 	@echo "  make acr-login              Authenticate Docker to ACR"
+	@echo "  make config-determinism-check Verify deterministic runtime config build"
 	@echo ""
 	@echo "Per-User (U=<slug> required, ENV=dev by default):"
 	@echo "  make add-user U=x           Deploy Container App for user"
@@ -116,54 +114,42 @@ help:
 	@echo "  make signal-register        Open shell for phone registration"
 	@echo "  make signal-logs-cli        Tail signal-cli logs"
 	@echo "  make signal-logs-proxy      Tail signal-proxy logs"
-	@echo "  make signal-update-phones   Sync SIGNAL_KNOWN_PHONES from .env.user.* files"
+	@echo "  make signal-update-phones   Sync SIGNAL_KNOWN_PHONES from config/users/*.env"
+	@echo ""
+	@echo "Teams Relay:"
+	@echo "  make teams-manifest ENV=dev Build Teams manifest for env"
+	@echo "  make teams-manifest-all      Build Teams manifests for all envs"
+	@echo "  make teams-validate ENV=dev  Validate Teams manifest for env"
+	@echo "  make teams-package ENV=dev   Build Teams app zip package for env"
+	@echo "  make teams-release-check     Run full local Teams release gate"
+	@echo "  make teams-relay-build      Build the Teams relay Function App"
+	@echo "  make teams-relay-deploy     Deploy relay (build + shared infra with relay enabled)"
 	@echo ""
 	@echo "Lifecycle:"
 	@echo "  make deploy-all U=x         1-click: shared + image + signal + user"
 	@echo "  make nuke-all               Destroy ALL users + shared infra (DANGER)"
-	@echo "  make rebuild-all            Rebuild shared infra + ALL users from .env.user.* files"
+	@echo "  make rebuild-all            Rebuild shared infra + ALL users from config/users/*.env"
 	@echo "  make full-rebuild           Full nuke then rebuild (DANGER)"
-
-# ===========================================================================
-# HELPERS (deployer IP detection, firewall dance)
-# ===========================================================================
-
-# Detect deployer's outbound IPs (machine may egress through different IPs)
-DEPLOYER_IPS = $(shell \
-	ip1=$$(curl -s --connect-timeout 5 ifconfig.me 2>/dev/null || echo ""); \
-	ip2=$$(curl -s --connect-timeout 5 https://api.ipify.org 2>/dev/null || echo ""); \
-	if [ -z "$$ip1" ] && [ -z "$$ip2" ]; then echo ""; \
-	elif [ "$$ip1" = "$$ip2" ] || [ -z "$$ip2" ]; then echo "$$ip1"; \
-	elif [ -z "$$ip1" ]; then echo "$$ip2"; \
-	else echo "$$ip1,$$ip2"; fi)
-
-# Common Terraform vars for the shared module
-define TF_SHARED_VARS
--var="environment=$(ENV)" \
--var="location=$(AZURE_LOCATION)" \
--var="owner_slug=$(AZURE_OWNER_SLUG)"
-endef
-
-# NFS storage account name (for firewall dance)
-NFS_SA_NAME ?= nfsopenclawshared$(ENV)
 
 # Guard: require env file exists
 define check_env_file
-	@test -f $(AZURE_ENV_FILE) || { echo "Missing $(AZURE_ENV_FILE) — copy from .env.azure.example"; exit 1; }
+	@test -f $(AZURE_ENV_FILE) || { echo "Missing $(AZURE_ENV_FILE) — run 'make config-bootstrap ENV=$(ENV)$(if $(U), U=$(U),)'"; exit 1; }
 endef
 
-# Guard: require U=<slug>
-define check_user
-	@[ -n "$(U)" ] || { echo "Usage: make $@ U=<slug> [ENV=$(ENV)]"; exit 1; }
+define check_prod_destructive_guard
+	@if [ "$(ENV)" = "prod" ]; then \
+		if [ "$(ALLOW_PROD_DESTRUCTIVE)" != "true" ]; then \
+			echo "ERROR: prod destructive action blocked."; \
+			echo "Set ALLOW_PROD_DESTRUCTIVE=true and BREAK_GLASS_TICKET=INC-12345 (or CHG-12345)."; \
+			exit 1; \
+		fi; \
+		if [ -z "$(BREAK_GLASS_TICKET)" ]; then \
+			echo "ERROR: BREAK_GLASS_TICKET is required for prod destructive actions."; \
+			exit 1; \
+		fi; \
+	fi
 endef
 
-# Guard: all required user-deploy variables must be set
-define check_user_vars
-	$(if $(USER_SLUG),,$(error USER_SLUG is required — pass U=<slug>))
-	$(if $(COMPASS_API_KEY),,$(error COMPASS_API_KEY is required — set in $(AZURE_ENV_FILE) or $(USER_ENV_FILE)))
-	$(if $(OPENCLAW_GATEWAY_AUTH_TOKEN),,$(error OPENCLAW_GATEWAY_AUTH_TOKEN is required — set in $(AZURE_ENV_FILE) or $(USER_ENV_FILE)))
-endef
-unexport check_user_vars
 
 # ===========================================================================
 # LOCAL TESTING
@@ -184,28 +170,52 @@ docker-down: ## Stop and remove local container and volumes
 tf-bootstrap-state: ## Provision remote TF state backend (run once)
 	@bash infra/bootstrap-state.sh
 
-_tf-init-shared:
-	terraform -chdir=$(TF_SHARED_DIR) init $(TF_BACKEND_CONFIG)
-
-deploy: _tf-init-shared ## Provision all shared infrastructure
+naming-check: ## Validate naming contract and print resolved names
 	$(check_env_file)
-	@echo "▸ Deploying shared infra to [$(ENV)] using $(AZURE_ENV_FILE)"
-	@bash infra/shared/import.sh "$(ENV)" "$(AZURE_LOCATION)" "$(AZURE_OWNER_SLUG)"
-	terraform -chdir=$(TF_SHARED_DIR) apply \
-		$(TF_SHARED_VARS)
+	@ENV_NAME=$(ENV) scripts/naming-contract.sh validate
+	@echo "Resolved names (ENV=$(ENV)):"
+	@echo "  AZURE_RESOURCE_GROUP      = $$(ENV_NAME=$(ENV) scripts/naming-contract.sh get AZURE_RESOURCE_GROUP)"
+	@echo "  AZURE_CONTAINERAPPS_ENV   = $$(ENV_NAME=$(ENV) scripts/naming-contract.sh get AZURE_CONTAINERAPPS_ENV)"
+	@echo "  AZURE_ACR_NAME            = $$(ENV_NAME=$(ENV) scripts/naming-contract.sh get AZURE_ACR_NAME)"
+	@echo "  AZURE_KEY_VAULT_NAME      = $$(ENV_NAME=$(ENV) scripts/naming-contract.sh get AZURE_KEY_VAULT_NAME)"
+	@echo "  NFS_SA_NAME               = $$(ENV_NAME=$(ENV) scripts/naming-contract.sh get NFS_SA_NAME)"
+	@echo "  CAE_NFS_STORAGE_NAME      = $$(ENV_NAME=$(ENV) scripts/naming-contract.sh get CAE_NFS_STORAGE_NAME)"
+	@echo "  TF_STATE_RG               = $$(ENV_NAME=$(ENV) scripts/naming-contract.sh get TF_STATE_RG)"
+	@echo "  TF_STATE_SA               = $$(ENV_NAME=$(ENV) scripts/naming-contract.sh get TF_STATE_SA)"
+	@echo "  TF_STATE_KEY              = $$(ENV_NAME=$(ENV) scripts/naming-contract.sh get TF_STATE_KEY)"
 
-deploy-plan: _tf-init-shared ## Plan shared infrastructure changes
-	$(check_env_file)
-	@echo "▸ Planning shared infra for [$(ENV)] using $(AZURE_ENV_FILE)"
-	@bash infra/shared/import.sh "$(ENV)" "$(AZURE_LOCATION)" "$(AZURE_OWNER_SLUG)"
-	terraform -chdir=$(TF_SHARED_DIR) plan \
-		$(TF_SHARED_VARS)
+hygiene-check: ## Fail if forbidden tracked files exist
+	@./scripts/hygiene-check.sh
 
-deploy-destroy: _tf-init-shared ## Destroy all shared infrastructure (DANGER)
-	$(check_env_file)
-	@echo "▸ Destroying shared infra for [$(ENV)] using $(AZURE_ENV_FILE)"
-	terraform -chdir=$(TF_SHARED_DIR) destroy \
-		$(TF_SHARED_VARS)
+config-bootstrap: ## Ensure local config exists (delegates to ocp)
+	@$(OCP) config bootstrap --env "$(ENV)" $(if $(U),--user "$(U)",)
+
+config-audit: ## Show rendered config paths and stale root env files
+	@echo "Shared env: $(AZURE_ENV_FILE)"
+	@echo "Shared local override: $(LOCAL_AZURE_ENV_FILE)"
+	@if [ -n "$(U)" ]; then \
+		echo "User env: $(USER_ENV_FILE)"; \
+		echo "User local override: $(LOCAL_USER_ENV_FILE)"; \
+	fi
+	@if ls .env.azure.* >/dev/null 2>&1 || ls .env.user.* >/dev/null 2>&1; then \
+		echo "WARNING: legacy root env files detected (deprecated):"; \
+		ls -1 .env.azure.* .env.user.* 2>/dev/null | sed '/\.example$$/d' || true; \
+	fi
+
+config-validate: ## Validate layered env files against typed schema (delegates to ocp)
+	@$(OCP) config validate --env "$(ENV)" $(if $(U),--user "$(U)",)
+
+doctor: ## Run local preflight diagnostics (delegates to ocp)
+	@$(OCP) doctor --env "$(ENV)" $(if $(U),--user "$(U)",)
+
+deploy: ## Provision all shared infrastructure (delegates to ocp)
+	@$(OCP) deploy shared --env "$(ENV)"
+
+deploy-plan: ## Plan shared infrastructure changes (delegates to ocp)
+	@$(OCP) deploy shared --env "$(ENV)" --plan
+
+deploy-destroy: ## Destroy all shared infrastructure (DANGER, delegates to ocp)
+	@$(OCP) deploy shared --env "$(ENV)" --destroy
 
 # ===========================================================================
 # GOLDEN IMAGE
@@ -225,451 +235,84 @@ build-image: ## Build & push the golden image via ACR Tasks
 show-image: ## Print the full image reference
 	@echo "$(IMAGE_REF)"
 
+config-determinism-check: ## Verify deterministic OpenClaw config assembly
+	@./scripts/check-config-determinism.sh
+
 # ===========================================================================
 # PER-USER DEPLOYMENT
 # ===========================================================================
 
-_tf-init-user:
-	terraform -chdir=$(TF_USER_DIR) init
+add-user: ## Deploy an isolated Container App for a user (delegates to ocp)
+	@$(OCP) deploy user --env "$(ENV)" --user "$(U)"
 
-_tf-workspace-user:
-	$(if $(USER_SLUG),,$(error USER_SLUG is required — pass U=<slug>))
-	terraform -chdir=$(TF_USER_DIR) workspace select -or-create $(USER_SLUG)
+add-user-plan: ## Plan a user deployment (dry run, delegates to ocp)
+	@$(OCP) deploy user --env "$(ENV)" --user "$(U)" --plan
 
-add-user: _tf-init-user _tf-workspace-user ## Deploy an isolated Container App for a user
-	$(check_user)
-	$(check_env_file)
-	$(call check_user_vars)
-	@echo "▸ Adding user '$(U)' to [$(ENV)] using $(AZURE_ENV_FILE)"
-	@echo "  Container: ca-openclaw-$(ENV)-$(U)"
-	@echo "  Image:     $(IMAGE_REF)"
-	$(eval SIGNAL_CLI_URL_TF := $(or $(SIGNAL_CLI_URL),$(shell terraform -chdir=$(TF_SHARED_DIR) output -json signal_cli_url 2>/dev/null | tr -d '"' || echo "")))
-	$(eval SIGNAL_PROXY_AUTH_TOKEN_TF := $(or $(SIGNAL_PROXY_AUTH_TOKEN),$(shell terraform -chdir=$(TF_SHARED_DIR) output -json signal_proxy_auth_token 2>/dev/null | tr -d '"' || echo "")))
-	$(eval SIGNAL_VARS := )
-	$(if $(and $(SIGNAL_CLI_URL_TF),$(SIGNAL_BOT_NUMBER),$(SIGNAL_USER_PHONE)), \
-		$(eval SIGNAL_VARS := -var="signal_bot_number=$(SIGNAL_BOT_NUMBER)") \
-		$(info Signal enabled: bot=$(SIGNAL_BOT_NUMBER) user=$(SIGNAL_USER_PHONE)), \
-		$(info Signal: skipped (missing vars or proxy not deployed)))
-	@set -e; \
-	echo "--- Discovering GRAPH_MCP_URL for $(U) ---"; \
-	GW_FQDN=$$(az containerapp show \
-		-n ca-graph-mcp-gw-$(ENV)-$(U) \
-		-g $(AZURE_RESOURCE_GROUP) \
-		--query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null) || true; \
-	if [ -z "$$GW_FQDN" ]; then \
-		echo "ERROR: MCP gateway ca-graph-mcp-gw-$(ENV)-$(U) not found in $(AZURE_RESOURCE_GROUP)."; \
-		echo "Deploy the gateway first, then re-run this target."; \
-		exit 1; \
-	fi; \
-	GRAPH_MCP_URL="http://$$GW_FQDN"; \
-	echo "GRAPH_MCP_URL=$$GRAPH_MCP_URL"; \
-	echo ""; \
-	echo "--- Opening firewalls for Terraform ---"; \
-	echo "Detected deployer IPs: $(DEPLOYER_IPS)"; \
-	az storage account update --name $(NFS_SA_NAME) --resource-group $(AZURE_RESOURCE_GROUP) \
-		--default-action Allow --output none; \
-	for ip in $$(echo "$(DEPLOYER_IPS)" | tr ',' ' '); do \
-		az keyvault network-rule add --name $(AZURE_KEY_VAULT_NAME) --resource-group $(AZURE_RESOURCE_GROUP) \
-			--ip-address $$ip/32 --output none 2>/dev/null || true; \
-	done; \
-	echo "Waiting 15s for firewall propagation..."; \
-	sleep 15; \
-	echo ""; \
-	echo "--- Running Terraform apply ---"; \
-	export TF_VAR_compass_base_url="$(COMPASS_BASE_URL)"; \
-	export TF_VAR_compass_api_key="$(COMPASS_API_KEY)"; \
-	export TF_VAR_openclaw_gateway_auth_token="$(OPENCLAW_GATEWAY_AUTH_TOKEN)"; \
-	export TF_VAR_tavily_api_key="$(TAVILY_API_KEY)"; \
-	export TF_VAR_signal_user_phone="$(SIGNAL_USER_PHONE)"; \
-	export TF_VAR_signal_cli_url="$(SIGNAL_CLI_URL_TF)"; \
-	export TF_VAR_signal_proxy_auth_token="$(SIGNAL_PROXY_AUTH_TOKEN_TF)"; \
-	terraform -chdir=$(TF_USER_DIR) apply -auto-approve \
-		-var="user_slug=$(U)" \
-		-var="environment=$(ENV)" \
-		-var="location=$(AZURE_LOCATION)" \
-		-var="image_ref=$(IMAGE_REF)" \
-		-var="graph_mcp_url=$$GRAPH_MCP_URL" \
-		-var="resource_group_name=$(AZURE_RESOURCE_GROUP)" \
-		-var="key_vault_name=$(AZURE_KEY_VAULT_NAME)" \
-		-var="acr_name=$(AZURE_ACR_NAME)" \
-		-var="cae_name=$(AZURE_CONTAINERAPPS_ENV)" \
-		-var="cae_nfs_storage_name=$(CAE_NFS_STORAGE_NAME)" \
-		$(SIGNAL_VARS) ; \
-	rc=$$?; \
-	echo ""; \
-	echo "--- Closing firewalls ---"; \
-	az storage account update --name $(NFS_SA_NAME) --resource-group $(AZURE_RESOURCE_GROUP) \
-		--default-action Deny --output none 2>/dev/null || true; \
-	for ip in $$(echo "$(DEPLOYER_IPS)" | tr ',' ' '); do \
-		az keyvault network-rule remove --name $(AZURE_KEY_VAULT_NAME) --resource-group $(AZURE_RESOURCE_GROUP) \
-			--ip-address $$ip/32 --output none 2>/dev/null || true; \
-	done; \
-	if [ $$rc -ne 0 ]; then \
-		echo ""; \
-		echo "ERROR: Terraform apply failed (exit code $$rc). Firewalls have been closed."; \
-		exit $$rc; \
-	fi; \
-	echo ""; \
-	echo "============================================="; \
-	echo " User app deployed: ca-openclaw-$(ENV)-$(U)"; \
-	echo "============================================="; \
-	echo "GRAPH_MCP_URL : $$GRAPH_MCP_URL"; \
-	echo "Image         : $(IMAGE_REF)"; \
-	echo ""; \
-	echo "--- Container status ---"; \
-	az containerapp show -n ca-openclaw-$(ENV)-$(U) -g $(AZURE_RESOURCE_GROUP) \
-		--query "{name:name, status:properties.provisioningState, revision:properties.latestRevisionName, fqdn:properties.configuration.ingress.fqdn}" \
-		-o table 2>/dev/null || echo "  (could not query container status)"
-	@$(MAKE) signal-update-phones ENV=$(ENV) 2>/dev/null || echo "  (signal-update-phones skipped — non-fatal)"
+remove-user: ## Destroy a user's Container App (delegates to ocp)
+	@$(OCP) user remove --env "$(ENV)" --user "$(U)"
 
-add-user-plan: _tf-init-user _tf-workspace-user ## Plan a user deployment (dry run)
-	$(check_user)
-	$(check_env_file)
-	$(call check_user_vars)
-	@echo "▸ Planning user '$(U)' on [$(ENV)] using $(AZURE_ENV_FILE)"
-	$(eval SIGNAL_CLI_URL_TF := $(or $(SIGNAL_CLI_URL),$(shell terraform -chdir=$(TF_SHARED_DIR) output -json signal_cli_url 2>/dev/null | tr -d '"' || echo "")))
-	$(eval SIGNAL_PROXY_AUTH_TOKEN_TF := $(or $(SIGNAL_PROXY_AUTH_TOKEN),$(shell terraform -chdir=$(TF_SHARED_DIR) output -json signal_proxy_auth_token 2>/dev/null | tr -d '"' || echo "")))
-	$(eval SIGNAL_VARS := )
-	$(if $(and $(SIGNAL_CLI_URL_TF),$(SIGNAL_BOT_NUMBER),$(SIGNAL_USER_PHONE)), \
-		$(eval SIGNAL_VARS := -var="signal_bot_number=$(SIGNAL_BOT_NUMBER)") \
-		$(info Signal enabled: bot=$(SIGNAL_BOT_NUMBER) user=$(SIGNAL_USER_PHONE)), \
-		$(info Signal: skipped (missing vars or proxy not deployed)))
-	@set -e; \
-	echo "--- Discovering GRAPH_MCP_URL for $(U) ---"; \
-	GW_FQDN=$$(az containerapp show \
-		-n ca-graph-mcp-gw-$(ENV)-$(U) \
-		-g $(AZURE_RESOURCE_GROUP) \
-		--query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null) || true; \
-	if [ -z "$$GW_FQDN" ]; then \
-		echo "ERROR: MCP gateway ca-graph-mcp-gw-$(ENV)-$(U) not found in $(AZURE_RESOURCE_GROUP)."; \
-		echo "Deploy the gateway first, then re-run this target."; \
-		exit 1; \
-	fi; \
-	GRAPH_MCP_URL="http://$$GW_FQDN"; \
-	echo "GRAPH_MCP_URL=$$GRAPH_MCP_URL"; \
-	echo ""; \
-	echo "--- Opening firewalls for Terraform ---"; \
-	echo "Detected deployer IPs: $(DEPLOYER_IPS)"; \
-	az storage account update --name $(NFS_SA_NAME) --resource-group $(AZURE_RESOURCE_GROUP) \
-		--default-action Allow --output none; \
-	for ip in $$(echo "$(DEPLOYER_IPS)" | tr ',' ' '); do \
-		az keyvault network-rule add --name $(AZURE_KEY_VAULT_NAME) --resource-group $(AZURE_RESOURCE_GROUP) \
-			--ip-address $$ip/32 --output none 2>/dev/null || true; \
-	done; \
-	echo "Waiting 15s for firewall propagation..."; \
-	sleep 15; \
-	echo ""; \
-	echo "--- Running Terraform plan ---"; \
-	export TF_VAR_compass_base_url="$(COMPASS_BASE_URL)"; \
-	export TF_VAR_compass_api_key="$(COMPASS_API_KEY)"; \
-	export TF_VAR_openclaw_gateway_auth_token="$(OPENCLAW_GATEWAY_AUTH_TOKEN)"; \
-	export TF_VAR_tavily_api_key="$(TAVILY_API_KEY)"; \
-	export TF_VAR_signal_user_phone="$(SIGNAL_USER_PHONE)"; \
-	export TF_VAR_signal_cli_url="$(SIGNAL_CLI_URL_TF)"; \
-	export TF_VAR_signal_proxy_auth_token="$(SIGNAL_PROXY_AUTH_TOKEN_TF)"; \
-	terraform -chdir=$(TF_USER_DIR) plan \
-		-var="user_slug=$(U)" \
-		-var="environment=$(ENV)" \
-		-var="location=$(AZURE_LOCATION)" \
-		-var="image_ref=$(IMAGE_REF)" \
-		-var="graph_mcp_url=$$GRAPH_MCP_URL" \
-		-var="resource_group_name=$(AZURE_RESOURCE_GROUP)" \
-		-var="key_vault_name=$(AZURE_KEY_VAULT_NAME)" \
-		-var="acr_name=$(AZURE_ACR_NAME)" \
-		-var="cae_name=$(AZURE_CONTAINERAPPS_ENV)" \
-		-var="cae_nfs_storage_name=$(CAE_NFS_STORAGE_NAME)" \
-		$(SIGNAL_VARS) ; \
-	rc=$$?; \
-	echo ""; \
-	echo "--- Closing firewalls ---"; \
-	az storage account update --name $(NFS_SA_NAME) --resource-group $(AZURE_RESOURCE_GROUP) \
-		--default-action Deny --output none 2>/dev/null || true; \
-	for ip in $$(echo "$(DEPLOYER_IPS)" | tr ',' ' '); do \
-		az keyvault network-rule remove --name $(AZURE_KEY_VAULT_NAME) --resource-group $(AZURE_RESOURCE_GROUP) \
-			--ip-address $$ip/32 --output none 2>/dev/null || true; \
-	done; \
-	if [ $$rc -ne 0 ]; then \
-		echo "ERROR: Terraform plan failed (exit code $$rc). Firewalls have been closed."; \
-		exit $$rc; \
-	fi
+import-user: ## Import an existing Azure resource into user TF state (R=<addr> ID=<azure_id>)
+	@$(OCP) user import --env "$(ENV)" --user "$(U)" --resource "$(R)" --azure-id "$(ID)"
 
-remove-user: _tf-init-user _tf-workspace-user ## Destroy a user's Container App
-	$(check_user)
-	$(check_env_file)
-	@echo "▸ Removing user '$(U)' from [$(ENV)] using $(AZURE_ENV_FILE)"
-	@set -e; \
-	echo "============================================="; \
-	echo " Destroying user app: ca-openclaw-$(ENV)-$(U)"; \
-	echo " Environment: $(ENV)"; \
-	echo "============================================="; \
-	echo ""; \
-	echo "--- Opening firewalls for Terraform ---"; \
-	echo "Detected deployer IPs: $(DEPLOYER_IPS)"; \
-	az storage account update --name $(NFS_SA_NAME) --resource-group $(AZURE_RESOURCE_GROUP) \
-		--default-action Allow --output none; \
-	for ip in $$(echo "$(DEPLOYER_IPS)" | tr ',' ' '); do \
-		az keyvault network-rule add --name $(AZURE_KEY_VAULT_NAME) --resource-group $(AZURE_RESOURCE_GROUP) \
-			--ip-address $$ip/32 --output none 2>/dev/null || true; \
-	done; \
-	echo "Waiting 15s for firewall propagation..."; \
-	sleep 15; \
-	echo ""; \
-	echo "--- Running Terraform destroy ---"; \
-	export TF_VAR_compass_api_key="placeholder"; \
-	export TF_VAR_openclaw_gateway_auth_token="placeholder"; \
-	terraform -chdir=$(TF_USER_DIR) destroy \
-		-var="user_slug=$(U)" \
-		-var="environment=$(ENV)" \
-		-var="location=$(AZURE_LOCATION)" \
-		-var="image_ref=placeholder" \
-		-var="graph_mcp_url=placeholder" \
-		-var="resource_group_name=$(AZURE_RESOURCE_GROUP)" \
-		-var="key_vault_name=$(AZURE_KEY_VAULT_NAME)" \
-		-var="acr_name=$(AZURE_ACR_NAME)" \
-		-var="cae_name=$(AZURE_CONTAINERAPPS_ENV)" \
-		-var="cae_nfs_storage_name=$(CAE_NFS_STORAGE_NAME)" ; \
-	rc=$$?; \
-	echo ""; \
-	echo "--- Closing firewalls ---"; \
-	az storage account update --name $(NFS_SA_NAME) --resource-group $(AZURE_RESOURCE_GROUP) \
-		--default-action Deny --output none 2>/dev/null || true; \
-	for ip in $$(echo "$(DEPLOYER_IPS)" | tr ',' ' '); do \
-		az keyvault network-rule remove --name $(AZURE_KEY_VAULT_NAME) --resource-group $(AZURE_RESOURCE_GROUP) \
-			--ip-address $$ip/32 --output none 2>/dev/null || true; \
-	done; \
-	if [ $$rc -ne 0 ]; then \
-		echo "ERROR: Terraform destroy failed (exit code $$rc). Firewalls have been closed."; \
-		exit $$rc; \
-	fi; \
-	echo ""; \
-	echo "============================================="; \
-	echo " User app destroyed: ca-openclaw-$(ENV)-$(U)"; \
-	echo "============================================="; \
-	echo "Note: NFS data at /data/$(U)/ is preserved."
-	@$(MAKE) signal-update-phones ENV=$(ENV) 2>/dev/null || echo "  (signal-update-phones skipped — non-fatal)"
+status: ## Show container status (all users, or specific with U=x, delegates to ocp)
+	@$(OCP) status --env "$(ENV)" $(if $(U),--user "$(U)",)
 
-import-user: _tf-init-user _tf-workspace-user ## Import an existing Azure resource into user TF state (R=<addr> ID=<azure_id>)
-	$(check_user)
-	$(check_env_file)
-	@[ -n "$(R)" ] || { echo "Usage: make import-user U=<slug> R=<tf_resource_addr> ID=<azure_resource_id> [ENV=$(ENV)]"; exit 1; }
-	@[ -n "$(ID)" ] || { echo "Usage: make import-user U=<slug> R=<tf_resource_addr> ID=<azure_resource_id> [ENV=$(ENV)]"; exit 1; }
-	@echo "▸ Importing resource into TF state for user '$(U)' on [$(ENV)]"
-	@echo "  Resource: $(R)"
-	@echo "  ID:       $(ID)"
-	$(eval SIGNAL_CLI_URL_TF := $(or $(SIGNAL_CLI_URL),$(shell terraform -chdir=$(TF_SHARED_DIR) output -json signal_cli_url 2>/dev/null | tr -d '"' || echo "")))
-	$(eval SIGNAL_PROXY_AUTH_TOKEN_TF := $(or $(SIGNAL_PROXY_AUTH_TOKEN),$(shell terraform -chdir=$(TF_SHARED_DIR) output -json signal_proxy_auth_token 2>/dev/null | tr -d '"' || echo "")))
-	$(eval SIGNAL_VARS := )
-	$(if $(and $(SIGNAL_CLI_URL_TF),$(SIGNAL_BOT_NUMBER),$(SIGNAL_USER_PHONE)), \
-		$(eval SIGNAL_VARS := -var="signal_bot_number=$(SIGNAL_BOT_NUMBER)"), \
-		)
-	@set -e; \
-	echo "--- Discovering GRAPH_MCP_URL for $(U) ---"; \
-	GW_FQDN=$$(az containerapp show \
-		-n ca-graph-mcp-gw-$(ENV)-$(U) \
-		-g $(AZURE_RESOURCE_GROUP) \
-		--query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null) || true; \
-	if [ -z "$$GW_FQDN" ]; then \
-		echo "WARNING: MCP gateway ca-graph-mcp-gw-$(ENV)-$(U) not found. Using placeholder."; \
-		GRAPH_MCP_URL="placeholder"; \
-	else \
-		GRAPH_MCP_URL="http://$$GW_FQDN"; \
-	fi; \
-	echo "GRAPH_MCP_URL=$$GRAPH_MCP_URL"; \
-	echo ""; \
-	echo "--- Opening firewalls for Terraform ---"; \
-	echo "Detected deployer IPs: $(DEPLOYER_IPS)"; \
-	az storage account update --name $(NFS_SA_NAME) --resource-group $(AZURE_RESOURCE_GROUP) \
-		--default-action Allow --output none; \
-	for ip in $$(echo "$(DEPLOYER_IPS)" | tr ',' ' '); do \
-		az keyvault network-rule add --name $(AZURE_KEY_VAULT_NAME) --resource-group $(AZURE_RESOURCE_GROUP) \
-			--ip-address $$ip/32 --output none 2>/dev/null || true; \
-	done; \
-	echo "Waiting 15s for firewall propagation..."; \
-	sleep 15; \
-	echo ""; \
-	echo "--- Running Terraform import ---"; \
-	export TF_VAR_compass_base_url="$(COMPASS_BASE_URL)"; \
-	export TF_VAR_compass_api_key="$(COMPASS_API_KEY)"; \
-	export TF_VAR_openclaw_gateway_auth_token="$(OPENCLAW_GATEWAY_AUTH_TOKEN)"; \
-	export TF_VAR_tavily_api_key="$(TAVILY_API_KEY)"; \
-	export TF_VAR_signal_user_phone="$(SIGNAL_USER_PHONE)"; \
-	export TF_VAR_signal_cli_url="$(SIGNAL_CLI_URL_TF)"; \
-	export TF_VAR_signal_proxy_auth_token="$(SIGNAL_PROXY_AUTH_TOKEN_TF)"; \
-	terraform -chdir=$(TF_USER_DIR) import \
-		-var="user_slug=$(U)" \
-		-var="environment=$(ENV)" \
-		-var="location=$(AZURE_LOCATION)" \
-		-var="image_ref=$(IMAGE_REF)" \
-		-var="graph_mcp_url=$$GRAPH_MCP_URL" \
-		-var="resource_group_name=$(AZURE_RESOURCE_GROUP)" \
-		-var="key_vault_name=$(AZURE_KEY_VAULT_NAME)" \
-		-var="acr_name=$(AZURE_ACR_NAME)" \
-		-var="cae_name=$(AZURE_CONTAINERAPPS_ENV)" \
-		-var="cae_nfs_storage_name=$(CAE_NFS_STORAGE_NAME)" \
-		$(SIGNAL_VARS) \
-		"$(R)" "$(ID)"; \
-	rc=$$?; \
-	echo ""; \
-	echo "--- Closing firewalls ---"; \
-	az storage account update --name $(NFS_SA_NAME) --resource-group $(AZURE_RESOURCE_GROUP) \
-		--default-action Deny --output none 2>/dev/null || true; \
-	for ip in $$(echo "$(DEPLOYER_IPS)" | tr ',' ' '); do \
-		az keyvault network-rule remove --name $(AZURE_KEY_VAULT_NAME) --resource-group $(AZURE_RESOURCE_GROUP) \
-			--ip-address $$ip/32 --output none 2>/dev/null || true; \
-	done; \
-	if [ $$rc -ne 0 ]; then \
-		echo "ERROR: Terraform import failed (exit code $$rc). Firewalls have been closed."; \
-		exit $$rc; \
-	fi; \
-	echo ""; \
-	echo "============================================="; \
-	echo " Imported $(R) into $(U) workspace"; \
-	echo "============================================="
-
-status: ## Show container status (all users, or specific with U=x)
-	$(check_env_file)
-	@echo "▸ Status for [$(ENV)] using $(AZURE_ENV_FILE)"
-	@if [ -n "$(U)" ]; then \
-		echo ""; \
-		echo "=== ca-openclaw-$(ENV)-$(U) ==="; \
-		az containerapp show -n ca-openclaw-$(ENV)-$(U) -g $(AZURE_RESOURCE_GROUP) \
-			--query "{name:name, status:properties.provisioningState, revision:properties.latestRevisionName, fqdn:properties.configuration.ingress.fqdn}" \
-			-o table 2>/dev/null || echo "  Not deployed"; \
-	else \
-		echo ""; \
-		echo "=== All OpenClaw container apps in $(AZURE_RESOURCE_GROUP) ==="; \
-		az containerapp list -g $(AZURE_RESOURCE_GROUP) \
-			--query "[?starts_with(name,'ca-openclaw-')].{name:name, status:properties.provisioningState, revision:properties.latestRevisionName}" \
-			-o table 2>/dev/null || echo "  None found"; \
-	fi
-
-logs: ## Tail user's container logs
-	$(check_user)
-	$(check_env_file)
-	@echo "▸ Logs for '$(U)' on [$(ENV)] using $(AZURE_ENV_FILE)"
-	az containerapp logs show \
-		--name ca-openclaw-$(ENV)-$(U) \
-		--resource-group $(AZURE_RESOURCE_GROUP) \
-		--follow --tail 100
+logs: ## Tail user's container logs (delegates to ocp)
+	@$(OCP) logs --env "$(ENV)" --user "$(U)"
 
 # ===========================================================================
 # SIGNAL MESSAGING STACK
 # ===========================================================================
 
 signal-build: ## Build & push signal-proxy image to ACR
-	$(check_env_file)
-	@echo "▸ Building signal-proxy image for [$(ENV)]"
-	@echo "Temporarily opening ACR firewall for build..."
-	@az acr update -n $(AZURE_ACR_NAME) --default-action Allow --output none 2>/dev/null || true
-	az acr build \
-		--registry $(AZURE_ACR_NAME) \
-		--image signal-proxy:$(IMAGE_TAG) \
-		--file signal-proxy/Dockerfile signal-proxy/
-	@echo "Restoring ACR firewall to Deny..."
-	@az acr update -n $(AZURE_ACR_NAME) --default-action Deny --output none 2>/dev/null || true
-	@echo "Signal-proxy image pushed: $(SIGNAL_PROXY_IMAGE)"
+	@$(OCP) signal build --env "$(ENV)"
 
-signal-deploy: _tf-init-shared signal-build ## Deploy full Signal stack (build proxy + signal-cli + proxy infra)
-	$(check_env_file)
-	@echo "▸ Deploying Signal stack to [$(ENV)]"
-	@echo "  Proxy image: $(SIGNAL_PROXY_IMAGE)"
-	@echo "Detected deployer IPs: $(DEPLOYER_IPS)"
-	@echo "Temporarily opening NFS firewall for Terraform..."
-	@az storage account update --name $(NFS_SA_NAME) --resource-group $(AZURE_RESOURCE_GROUP) \
-		--default-action Allow --output none 2>/dev/null || true
-	@echo "Waiting 15s for NFS firewall propagation..."
-	@sleep 15
-	terraform -chdir=$(TF_SHARED_DIR) apply \
-		$(TF_SHARED_VARS) \
-		-var="deployer_ips=$(DEPLOYER_IPS)" \
-		-var="signal_cli_enabled=true" \
-		-var="signal_proxy_image=$(SIGNAL_PROXY_IMAGE)" \
-		-var="signal_bot_number=$(SIGNAL_BOT_NUMBER)" \
-		-var="signal_proxy_auth_token=$(SIGNAL_PROXY_AUTH_TOKEN)"
-	@echo "Restoring NFS firewall to Deny..."
-	@az storage account update --name $(NFS_SA_NAME) --resource-group $(AZURE_RESOURCE_GROUP) \
-		--default-action Deny --output none 2>/dev/null || true
-	@echo ""
-	@echo "============================================="
-	@echo " Signal stack deployed!"
-	@echo "============================================="
-	@echo "Proxy URL: (sensitive — contains auth token, use 'terraform output signal_cli_url' to view)"
-	@echo "Direct URL: $$(terraform -chdir=$(TF_SHARED_DIR) output -raw signal_cli_direct_url 2>/dev/null)"
-	@echo ""
-	@echo "Next: run 'make signal-register' to register your bot phone number."
-	@$(MAKE) signal-update-phones ENV=$(ENV) 2>/dev/null || echo "  (signal-update-phones skipped — non-fatal)"
+signal-deploy: ## Deploy full Signal stack (build proxy + signal-cli + proxy infra)
+	@$(OCP) signal deploy --env "$(ENV)"
 
-signal-plan: _tf-init-shared ## Plan Signal stack deployment (dry run)
-	$(check_env_file)
-	@echo "▸ Planning Signal stack for [$(ENV)]"
-	@echo "Detected deployer IPs: $(DEPLOYER_IPS)"
-	terraform -chdir=$(TF_SHARED_DIR) plan \
-		$(TF_SHARED_VARS) \
-		-var="deployer_ips=$(DEPLOYER_IPS)" \
-		-var="signal_cli_enabled=true" \
-		-var="signal_proxy_image=$(SIGNAL_PROXY_IMAGE)" \
-		-var="signal_bot_number=$(SIGNAL_BOT_NUMBER)" \
-		-var="signal_proxy_auth_token=$(SIGNAL_PROXY_AUTH_TOKEN)"
+signal-plan: ## Plan Signal stack deployment (dry run)
+	@$(OCP) signal deploy --env "$(ENV)" --plan
 
 signal-status: ## Show status of Signal containers
-	$(check_env_file)
-	@echo "▸ Signal status for [$(ENV)]"
-	@echo ""
-	@echo "=== signal-cli daemon ==="
-	@az containerapp show -n ca-signal-cli-$(ENV) -g $(AZURE_RESOURCE_GROUP) \
-		--query "{name:name, status:properties.provisioningState, revision:properties.latestRevisionName, fqdn:properties.configuration.ingress.fqdn}" \
-		-o table 2>/dev/null || echo "  Not deployed"
-	@echo ""
-	@echo "=== signal-proxy ==="
-	@az containerapp show -n ca-signal-proxy-$(ENV) -g $(AZURE_RESOURCE_GROUP) \
-		--query "{name:name, status:properties.provisioningState, revision:properties.latestRevisionName, fqdn:properties.configuration.ingress.fqdn}" \
-		-o table 2>/dev/null || echo "  Not deployed"
+	@$(OCP) signal status --env "$(ENV)"
 
 signal-register: ## Open shell in signal-cli container for phone registration
-	$(check_env_file)
-	@echo "Opening shell in signal-cli container..."
-	@echo "Run: signal-cli -a +YOURNUMBER register"
-	@echo "Then: signal-cli -a +YOURNUMBER verify CODE"
-	@echo ""
-	az containerapp exec \
-		--name ca-signal-cli-$(ENV) \
-		--resource-group $(AZURE_RESOURCE_GROUP) \
-		--command /bin/sh
+	@$(OCP) signal register --env "$(ENV)"
 
 signal-logs-cli: ## Tail signal-cli container logs
-	$(check_env_file)
-	az containerapp logs show \
-		--name ca-signal-cli-$(ENV) \
-		--resource-group $(AZURE_RESOURCE_GROUP) \
-		--follow --tail 100
+	@$(OCP) signal logs-cli --env "$(ENV)"
 
 signal-logs-proxy: ## Tail signal-proxy container logs
-	$(check_env_file)
-	az containerapp logs show \
-		--name ca-signal-proxy-$(ENV) \
-		--resource-group $(AZURE_RESOURCE_GROUP) \
-		--follow --tail 100
+	@$(OCP) signal logs-proxy --env "$(ENV)"
 
-signal-update-phones: ## Sync SIGNAL_KNOWN_PHONES on signal-proxy from .env.user.* files
-	$(check_env_file)
-	@[ -n "$(SIGNAL_BOT_NUMBER)" ] || { echo "SIGNAL_BOT_NUMBER not set — skipping signal-update-phones"; exit 0; }
-	@echo "▸ Updating SIGNAL_KNOWN_PHONES on ca-signal-proxy-$(ENV)"
-	@PHONES="$(SIGNAL_BOT_NUMBER)"; \
-	for f in .env.user.*; do \
-		case "$$f" in *.example|*.swp|*~) continue ;; esac; \
-		[ -f "$$f" ] || continue; \
-		p=$$(grep -E '^SIGNAL_USER_PHONE=' "$$f" 2>/dev/null | head -1 | cut -d= -f2 | tr -d ' "'"'"''); \
-		if [ -n "$$p" ]; then \
-			PHONES="$$PHONES,$$p"; \
-		fi; \
-	done; \
-	echo "  Phones: $$PHONES"; \
-	az containerapp update \
-		--name ca-signal-proxy-$(ENV) \
-		--resource-group $(AZURE_RESOURCE_GROUP) \
-		--set-env-vars "SIGNAL_KNOWN_PHONES=$$PHONES" \
-		--output none; \
-	echo "  SIGNAL_KNOWN_PHONES updated on ca-signal-proxy-$(ENV)"
+signal-update-phones: ## Sync SIGNAL_KNOWN_PHONES on signal-proxy from config/users/*.env
+	@$(OCP) signal update-phones --env "$(ENV)"
+
+# ===========================================================================
+# TEAMS RELAY (Azure Function — webhook proxy for internal CAE)
+# ===========================================================================
+
+teams-manifest: ## Render Teams manifest for ENV (dev|stage|prod)
+	@$(OCP) teams manifest --env "$(ENV)"
+
+teams-manifest-all: ## Render Teams manifests for dev, stage, and prod
+	@$(OCP) teams manifest-all
+
+teams-validate: ## Validate rendered Teams manifest for ENV
+	@$(OCP) teams validate --env "$(ENV)"
+
+teams-package: ## Build Teams package zip for ENV (dev|stage|prod)
+	@$(OCP) teams package --env "$(ENV)"
+
+teams-release-check: ## Full local release gate for Teams app
+	@$(OCP) teams release-check
+
+
+teams-relay-build: ## Build the Teams relay Function App
+	@$(OCP) teams relay-build --env "$(ENV)"
+
+teams-relay-deploy: ## Deploy relay (build + shared infra with relay enabled)
+	@$(OCP) teams relay-deploy --env "$(ENV)"
 
 # ===========================================================================
 # 1-CLICK DEPLOYMENT
@@ -689,23 +332,26 @@ deploy-all: deploy build-image ## 1-Click: Shared Infra + Golden Image + Signal 
 
 # ===========================================================================
 # PLATFORM RESET (see REBUILD.md for full details)
-# These operate on ALL users discovered from .env.user.* files.
+# These operate on ALL users discovered from config/users/*.env.
 # ===========================================================================
 
 nuke-all: ## DANGER: Destroy ALL users + shared infra
+	$(check_prod_destructive_guard)
 	@echo "============================================="
 	@echo " NUKE ALL — $(ENV)"
 	@echo "============================================="
-	./platform-reset.sh -e $(ENV) --nuke-only
+	@$(OCP) reset --env "$(ENV)" --nuke-only
 
-rebuild-all: ## Rebuild shared infra + ALL users from .env.user.* files
+rebuild-all: ## Rebuild shared infra + ALL users from config/users/*.env
+	$(check_prod_destructive_guard)
 	@echo "============================================="
 	@echo " REBUILD ALL — $(ENV)"
 	@echo "============================================="
-	./platform-reset.sh -e $(ENV) --rebuild-only
+	@$(OCP) reset --env "$(ENV)" --rebuild-only
 
 full-rebuild: ## DANGER: Full nuke then rebuild (end-to-end)
+	$(check_prod_destructive_guard)
 	@echo "============================================="
 	@echo " FULL REBUILD — $(ENV)"
 	@echo "============================================="
-	./platform-reset.sh -e $(ENV)
+	@$(OCP) reset --env "$(ENV)"

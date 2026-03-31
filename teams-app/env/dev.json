@@ -1,0 +1,14 @@
+{
+  "version": "1.0.3",
+  "name": {
+    "short": "OpenClaw Dev",
+    "full": "OpenClaw Development Bot"
+  },
+  "description": {
+    "short": "AI assistant for Department of Health",
+    "full": "OpenClaw AI assistant - development instance for testing Microsoft Teams integration."
+  },
+  "validDomains": [
+    "func-relay-openclaw-dev.azurewebsites.net"
+  ]
+}

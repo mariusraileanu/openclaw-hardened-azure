@@ -1,5 +1,3 @@
-data "azurerm_client_config" "current" {}
-
 # ---------------------------------------------------------------------------
 # Look up shared resources by name (no Terraform remote state dependency).
 # Works regardless of whether shared infra was provisioned by Terraform,
@@ -25,9 +23,17 @@ data "azurerm_container_registry" "shared" {
 }
 
 locals {
-  app_name       = "ca-openclaw-${var.environment}-${var.user_slug}"
-  tavily_enabled = var.tavily_api_key != ""
-  signal_enabled = var.signal_cli_url != "" && var.signal_bot_number != "" && var.signal_user_phone != ""
+  app_name        = "ca-openclaw-${var.environment}-${var.user_slug}"
+  tavily_enabled  = var.tavily_api_key != ""
+  signal_enabled  = var.signal_cli_url != "" && var.signal_bot_number != "" && var.signal_user_phone != ""
+  msteams_enabled = var.msteams_enabled && var.msteams_tenant_id != "" && var.msteams_app_id != ""
+
+  # Extract secret name from KV data-plane URL and build an ARM resource ID
+  # that azurerm_role_assignment can use as scope.
+  # Input:  https://<vault>.vault.azure.net/secrets/<name>
+  # Output: /subscriptions/.../Microsoft.KeyVault/vaults/<vault>/secrets/<name>
+  msteams_kv_secret_name      = var.msteams_app_password_secret_id != "" ? element(split("/", var.msteams_app_password_secret_id), length(split("/", var.msteams_app_password_secret_id)) - 1) : ""
+  msteams_kv_secret_arm_scope = var.msteams_app_password_secret_id != "" ? "${data.azurerm_key_vault.shared.id}/secrets/${local.msteams_kv_secret_name}" : ""
 
   tags = {
     environment = var.environment
@@ -43,8 +49,9 @@ locals {
       { name = "COMPASS_BASE_URL", value = var.compass_base_url },
       { name = "COMPASS_API_KEY", secretRef = "compass-api-key" },
       { name = "GRAPH_MCP_URL", secretRef = "graph-mcp-url" },
-      { name = "OPENCLAW_GATEWAY_AUTH_TOKEN", secretRef = "gateway-token" },
       { name = "USER_SLUG", value = var.user_slug },
+      # Gateway runs on loopback behind the HTTP proxy; token auth is unnecessary.
+      { name = "OPENCLAW_FORCE_NO_AUTH", value = "true" },
     ],
     local.tavily_enabled ? [
       { name = "TAVILY_API_KEY", secretRef = "tavily-api-key" },
@@ -54,6 +61,15 @@ locals {
       { name = "SIGNAL_PROXY_AUTH_TOKEN", value = var.signal_proxy_auth_token },
       { name = "SIGNAL_BOT_NUMBER", value = var.signal_bot_number },
       { name = "SIGNAL_USER_PHONE", value = var.signal_user_phone },
+    ] : [],
+    local.msteams_enabled ? [
+      { name = "MSTEAMS_APP_ID", value = var.msteams_app_id },
+      { name = "MSTEAMS_APP_PASSWORD", secretRef = "msteams-app-password" },
+      { name = "MSTEAMS_TENANT_ID", value = var.msteams_tenant_id },
+      { name = "MicrosoftAppType", value = "MultiTenant" },
+      { name = "MicrosoftAppId", value = var.msteams_app_id },
+      { name = "MicrosoftAppPassword", secretRef = "msteams-app-password" },
+      { name = "MicrosoftAppTenantId", value = var.msteams_tenant_id },
     ] : []
   )
 
@@ -129,6 +145,9 @@ locals {
       }
     }
   })
+
+  # Full PATCH body for the Teams receiver app's NFS volume + volumeMount.
+  # Same storage path as the main app so Teams and gateway share user state.
 }
 
 # ---------------------------------------------------------------------------
@@ -182,15 +201,6 @@ resource "azurerm_key_vault_secret" "graph_mcp_url" {
   tags            = local.tags
 }
 
-resource "azurerm_key_vault_secret" "gateway_token" {
-  name            = "${var.user_slug}-gateway-token"
-  value           = var.openclaw_gateway_auth_token
-  key_vault_id    = data.azurerm_key_vault.shared.id
-  content_type    = "text/plain"
-  expiration_date = timeadd(time_static.secret_expiry_base.rfc3339, "8760h")
-  tags            = local.tags
-}
-
 resource "azurerm_key_vault_secret" "tavily_api_key" {
   count           = local.tavily_enabled ? 1 : 0
   name            = "${var.user_slug}-tavily-api-key"
@@ -216,15 +226,22 @@ resource "azurerm_role_assignment" "kv_secret_graph_mcp" {
   principal_id         = azurerm_user_assigned_identity.user.principal_id
 }
 
-resource "azurerm_role_assignment" "kv_secret_gateway" {
-  scope                = azurerm_key_vault_secret.gateway_token.resource_versionless_id
+resource "azurerm_role_assignment" "kv_secret_tavily" {
+  count                = local.tavily_enabled ? 1 : 0
+  scope                = azurerm_key_vault_secret.tavily_api_key[0].resource_versionless_id
   role_definition_name = "Key Vault Secrets User"
   principal_id         = azurerm_user_assigned_identity.user.principal_id
 }
 
-resource "azurerm_role_assignment" "kv_secret_tavily" {
-  count                = local.tavily_enabled ? 1 : 0
-  scope                = azurerm_key_vault_secret.tavily_api_key[0].resource_versionless_id
+# ---------------------------------------------------------------------------
+# Microsoft Teams: grant per-user identity read access to shared bot secret
+# ---------------------------------------------------------------------------
+# The shared bot password lives in Key Vault (created by shared infra).
+# Each user container needs to read it to validate Bot Framework JWTs and
+# send replies. The secret ID is passed from shared Terraform outputs.
+resource "azurerm_role_assignment" "kv_secret_msteams" {
+  count                = local.msteams_enabled ? 1 : 0
+  scope                = local.msteams_kv_secret_arm_scope
   role_definition_name = "Key Vault Secrets User"
   principal_id         = azurerm_user_assigned_identity.user.principal_id
 }
@@ -241,6 +258,7 @@ resource "time_sleep" "rbac_propagation" {
     azurerm_role_assignment.kv_secret_graph_mcp,
     azurerm_role_assignment.kv_secret_gateway,
     azurerm_role_assignment.kv_secret_tavily,
+    azurerm_role_assignment.kv_secret_msteams,
   ]
 
   create_duration = "120s"
@@ -260,10 +278,13 @@ resource "azurerm_container_app" "user" {
 
   lifecycle {
     ignore_changes = [
-      template[0].volume,                     # Managed via null_resource.nfs_volume_patch (NfsAzureFile not supported by azurerm)
-      template[0].container[0].volume_mounts, # Added by null_resource after creation
-      template[0].init_container,             # Init container added by null_resource patch
-      workload_profile_name,                  # Azure auto-sets to "Consumption"; not in our config
+      template[0].volume,                     # Managed via AzAPI patch (NfsAzureFile not supported by azurerm)
+      template[0].container[0].volume_mounts, # Added by AzAPI after creation
+      template[0].init_container,             # Init container added by AzAPI patch
+      template[0].container[0].startup_probe, # Azure/API may normalize probe ordering/fields after patch
+      template[0].container[0].liveness_probe,
+      workload_profile_name, # Azure auto-sets to "Consumption"; not in our config
+      tags["CreatedDate"],
     ]
   }
 
@@ -289,12 +310,6 @@ resource "azurerm_container_app" "user" {
     identity            = azurerm_user_assigned_identity.user.id
   }
 
-  secret {
-    name                = "gateway-token"
-    key_vault_secret_id = azurerm_key_vault_secret.gateway_token.versionless_id
-    identity            = azurerm_user_assigned_identity.user.id
-  }
-
   dynamic "secret" {
     for_each = local.tavily_enabled ? [1] : []
     content {
@@ -304,10 +319,24 @@ resource "azurerm_container_app" "user" {
     }
   }
 
+  dynamic "secret" {
+    for_each = local.msteams_enabled ? [1] : []
+    content {
+      name                = "msteams-app-password"
+      key_vault_secret_id = var.msteams_app_password_secret_id
+      identity            = azurerm_user_assigned_identity.user.id
+    }
+  }
+
   ingress {
-    external_enabled = false
-    target_port      = 18789
-    transport        = "http"
+    # External so the relay function app can reach it via the VNet-accessible
+    # FQDN.  The HTTP path-based proxy on port 18789 routes POST /api/messages
+    # to the Teams webhook (port 3978) and everything else to the gateway
+    # (port 18790).  allow_insecure is needed because the relay sends plain HTTP.
+    external_enabled           = true
+    target_port                = 18789
+    transport                  = "http"
+    allow_insecure_connections = true
 
     traffic_weight {
       latest_revision = true
@@ -321,8 +350,8 @@ resource "azurerm_container_app" "user" {
 
     # NOTE: volume is NOT defined here. The azurerm provider only supports
     # "AzureFile" but the CAE storage mount is NfsAzureFile, which causes a
-    # 400 error. The null_resource.nfs_volume_patch below adds the NFS volume
-    # + container volumeMount via REST API after creation.
+    # 400 error. The azapi_update_resource.nfs_volume_patch below adds the NFS
+    # volume + container volumeMount after creation.
 
     container {
       name   = "openclaw"
@@ -330,7 +359,7 @@ resource "azurerm_container_app" "user" {
       cpu    = var.cpu
       memory = var.memory
 
-      # NOTE: volume_mounts not defined here -- added by null_resource patch
+      # NOTE: volume_mounts not defined here -- added by AzAPI patch
 
       env {
         name  = "COMPASS_BASE_URL"
@@ -345,11 +374,6 @@ resource "azurerm_container_app" "user" {
       env {
         name        = "GRAPH_MCP_URL"
         secret_name = "graph-mcp-url"
-      }
-
-      env {
-        name        = "OPENCLAW_GATEWAY_AUTH_TOKEN"
-        secret_name = "gateway-token"
       }
 
       env {
@@ -399,6 +423,63 @@ resource "azurerm_container_app" "user" {
         }
       }
 
+      # Microsoft Teams channel config (only set when msteams_enabled is true)
+      dynamic "env" {
+        for_each = local.msteams_enabled ? [1] : []
+        content {
+          name  = "MSTEAMS_APP_ID"
+          value = var.msteams_app_id
+        }
+      }
+
+      dynamic "env" {
+        for_each = local.msteams_enabled ? [1] : []
+        content {
+          name        = "MSTEAMS_APP_PASSWORD"
+          secret_name = "msteams-app-password"
+        }
+      }
+
+      dynamic "env" {
+        for_each = local.msteams_enabled ? [1] : []
+        content {
+          name  = "MSTEAMS_TENANT_ID"
+          value = var.msteams_tenant_id
+        }
+      }
+
+      dynamic "env" {
+        for_each = local.msteams_enabled ? [1] : []
+        content {
+          name  = "MicrosoftAppType"
+          value = "MultiTenant"
+        }
+      }
+
+      dynamic "env" {
+        for_each = local.msteams_enabled ? [1] : []
+        content {
+          name  = "MicrosoftAppId"
+          value = var.msteams_app_id
+        }
+      }
+
+      dynamic "env" {
+        for_each = local.msteams_enabled ? [1] : []
+        content {
+          name        = "MicrosoftAppPassword"
+          secret_name = "msteams-app-password"
+        }
+      }
+
+      dynamic "env" {
+        for_each = local.msteams_enabled ? [1] : []
+        content {
+          name  = "MicrosoftAppTenantId"
+          value = var.msteams_tenant_id
+        }
+      }
+
       # Startup probe: generous failure threshold for gateway initialization
       # 10 * 6s = 60s max startup time (max failure_count_threshold is 10)
       startup_probe {
@@ -429,43 +510,36 @@ resource "azurerm_container_app" "user" {
 # ---------------------------------------------------------------------------
 # The azurerm provider cannot create a container app with NfsAzureFile volumes
 # (only supports "AzureFile", but the CAE storage is registered as NfsAzureFile).
-# So we create the container app bare (no volume/mounts), then this
-# null_resource patches in the NFS volume and updates the FULL container spec
-# (env vars, probes, volumeMounts) via a single atomic REST PATCH.
+# So we create the container app bare (no volume/mounts), then AzAPI patches in
+# the NFS volume and updates the FULL container spec (env vars, probes,
+# volumeMounts) via ARM.
 # The body is built by jsonencode (local.nfs_patch_body) to guarantee the
 # patch never clobbers env vars or probes.
-resource "null_resource" "nfs_volume_patch" {
-  triggers = {
-    app_id         = azurerm_container_app.user.id
-    user_slug      = var.user_slug
-    tavily_enabled = local.tavily_enabled
-    signal_enabled = local.signal_enabled
-    # Force re-run when the patch body changes (e.g. new env vars, image, etc.)
-    patch_hash = sha256(local.nfs_patch_body)
-  }
+resource "azapi_update_resource" "nfs_volume_patch" {
+  type        = "Microsoft.App/containerApps@2024-03-01"
+  resource_id = azurerm_container_app.user.id
+  body        = local.nfs_patch_body
 
-  provisioner "local-exec" {
-    command = <<-EOT
-      # Wait for any in-progress provisioning to complete
-      for i in $(seq 1 30); do
-        state=$(az containerapp show --ids ${azurerm_container_app.user.id} --query "properties.provisioningState" -o tsv 2>/dev/null)
-        if [ "$state" = "Succeeded" ] || [ "$state" = "Failed" ]; then break; fi
-        sleep 10
-      done
-
-      # Write the patch body to a temp file (avoids shell quoting issues)
-      cat > /tmp/nfs-patch-${var.user_slug}.json <<'PATCH_EOF'
-${local.nfs_patch_body}
-PATCH_EOF
-
-      az rest --method PATCH \
-        --uri "${azurerm_container_app.user.id}?api-version=2024-03-01" \
-        --body @/tmp/nfs-patch-${var.user_slug}.json \
-        --output none
-
-      rm -f /tmp/nfs-patch-${var.user_slug}.json
-    EOT
+  lifecycle {
+    ignore_changes = [body]
   }
 
   depends_on = [azurerm_container_app.user]
 }
+
+data "azapi_resource" "user_container_template" {
+  type        = "Microsoft.App/containerApps@2024-03-01"
+  resource_id = azurerm_container_app.user.id
+
+  response_export_values = ["*"]
+
+  depends_on = [azapi_update_resource.nfs_volume_patch]
+}
+
+check "user_nfs_mount_present" {
+  assert {
+    condition     = can(regex("NfsAzureFile", jsonencode(data.azapi_resource.user_container_template.output))) && can(regex("/app/data", jsonencode(data.azapi_resource.user_container_template.output)))
+    error_message = "User container app is missing expected NFS volume or mount after AzAPI patch."
+  }
+}
+

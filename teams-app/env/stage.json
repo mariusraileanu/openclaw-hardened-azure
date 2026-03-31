@@ -1,0 +1,14 @@
+{
+  "version": "1.0.3",
+  "name": {
+    "short": "OpenClaw Stage",
+    "full": "OpenClaw Staging Bot"
+  },
+  "description": {
+    "short": "AI assistant for Department of Health",
+    "full": "OpenClaw AI assistant - staging instance for pre-production validation."
+  },
+  "validDomains": [
+    "func-relay-openclaw-stage.azurewebsites.net"
+  ]
+}

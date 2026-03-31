@@ -8,13 +8,17 @@ terraform {
   backend "local" {}
 
   required_providers {
+    azapi = {
+      source  = "azure/azapi"
+      version = "~> 1.13"
+    }
     azurerm = {
       source  = "hashicorp/azurerm"
       version = "~> 4.0"
     }
-    null = {
-      source  = "hashicorp/null"
-      version = "~> 3.2"
+    azuread = {
+      source  = "hashicorp/azuread"
+      version = "~> 3.0"
     }
     time = {
       source  = "hashicorp/time"
@@ -23,6 +27,8 @@ terraform {
   }
 }
 
+provider "azapi" {}
+
 provider "azurerm" {
   features {
     key_vault {
@@ -30,3 +36,5 @@ provider "azurerm" {
     }
   }
 }
+
+provider "azuread" {}

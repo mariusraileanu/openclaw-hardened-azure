@@ -9,7 +9,7 @@ services:
     ports:
       - "127.0.0.1:18789:18789"
     environment:
-      # No fallback defaults — set these in .env (see .env.example)
+      # No fallback defaults — set these in your shell env before docker-up
       - COMPASS_API_KEY=${COMPASS_API_KEY}
       - GRAPH_MCP_URL=${GRAPH_MCP_URL}
       - OPENCLAW_GATEWAY_AUTH_TOKEN=${OPENCLAW_GATEWAY_AUTH_TOKEN}

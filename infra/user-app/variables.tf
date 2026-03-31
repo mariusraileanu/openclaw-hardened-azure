@@ -44,7 +44,6 @@ variable "cae_name" {
 variable "cae_nfs_storage_name" {
   description = "Name of the NFS storage mount registered in the CAE (e.g. openclaw-nfs-prod)"
   type        = string
-  default     = "openclaw-nfs"
 }
 
 # ---------------------------------------------------------------------------
@@ -73,22 +72,16 @@ variable "graph_mcp_url" {
   sensitive   = true
 }
 
-variable "openclaw_gateway_auth_token" {
-  description = "OpenClaw gateway authentication token"
-  type        = string
-  sensitive   = true
-}
-
 variable "cpu" {
   description = "CPU allocation for the container (in cores)"
   type        = number
-  default     = 1.0
+  default     = 2.0
 }
 
 variable "memory" {
   description = "Memory allocation for the container"
   type        = string
-  default     = "2Gi"
+  default     = "4Gi"
 }
 
 variable "min_replicas" {
@@ -140,6 +133,36 @@ variable "signal_bot_number" {
 
 variable "signal_user_phone" {
   description = "User's Signal phone number in E.164 format (for allowFrom). Only this number can DM the bot."
+  type        = string
+  default     = ""
+}
+
+# ---------------------------------------------------------------------------
+# Microsoft Teams Channel (optional)
+# ---------------------------------------------------------------------------
+# The shared bot (App Registration + Bot Service) is created by shared infra.
+# Per-user Terraform only needs to know the bot's credentials and enable the
+# Teams channel for this specific user's container.
+variable "msteams_enabled" {
+  description = "Enable Microsoft Teams channel for this user. The container receives shared bot credentials and starts a Bot Framework webhook listener on port 3978."
+  type        = bool
+  default     = false
+}
+
+variable "msteams_tenant_id" {
+  description = "Azure AD tenant ID for the shared Teams bot (from shared infra output)."
+  type        = string
+  default     = ""
+}
+
+variable "msteams_app_id" {
+  description = "Shared bot App Registration client ID (from shared infra output)."
+  type        = string
+  default     = ""
+}
+
+variable "msteams_app_password_secret_id" {
+  description = "Key Vault versionless secret ID for the shared bot password (from shared infra output msteams_app_password_secret_id)."
   type        = string
   default     = ""
 }

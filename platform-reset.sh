@@ -2,7 +2,7 @@
 # ===========================================================================
 # OpenClaw Azure Platform — Nuke & Rebuild Script
 #
-# Operates on ALL users discovered from .env.user.* files.
+# Operates on ALL users discovered from config/users/*.env.
 # No --user flag — this is a platform-wide tool.
 #
 # Usage:
@@ -13,11 +13,18 @@
 #   ./platform-reset.sh --rebuild-only        # Rebuild only, assumes clean state
 #   ./platform-reset.sh -e prod -f            # Non-interactive prod reset
 #
+# Prod safety guardrails (required for prod runs):
+#   ALLOW_PROD_DESTRUCTIVE=true
+#   BREAK_GLASS_TICKET=INC-12345 (or CHG-12345)
+# Optional for protected CI branches/runners:
+#   ALLOW_PROTECTED_DESTRUCTIVE=true
+#
 # NFS Lessons Learned:
 #   - azurerm_container_app_environment_storage only supports SMB (AzureFile).
-#     NFS mounts use null_resource + "az containerapp env storage set --storage-type NfsAzureFile".
+#     NFS mounts are managed via AzAPI (managedEnvironments/storages +
+#     containerApps template updates for NfsAzureFile).
 #   - azurerm_container_app storage_type only accepts AzureFile|EmptyDir|Secret.
-#     NfsAzureFile is patched via REST API (null_resource.nfs_volume_patch).
+#     NfsAzureFile requires AzAPI patch resources.
 #   - NFS Premium FileStorage with default_action=Deny blocks Terraform data-plane.
 #     Workaround: temporarily set --default-action Allow during terraform apply.
 #   - ACR Tasks build agent IPs are unpredictable. Temporarily set ACR default
@@ -65,7 +72,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --rebuild-only      Rebuild only (assumes clean state)"
       echo "  -h, --help          Show this help"
       echo ""
-      echo "This script operates on ALL users discovered from .env.user.* files."
+      echo "This script operates on ALL users discovered from config/users/*.env files."
       exit 0
       ;;
     *)
@@ -77,13 +84,33 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ---------------------------------------------------------------------------
-# Load per-environment env file
+# Load layered config directly from config/
 # ---------------------------------------------------------------------------
 AZURE_ENVIRONMENT="${ENV_ARG}"
-if [[ -f ".env.azure.${AZURE_ENVIRONMENT}" ]]; then
-  set -a
-  source ".env.azure.${AZURE_ENVIRONMENT}"
-  set +a
+SHARED_ENV_FILE="config/env/${AZURE_ENVIRONMENT}.env"
+LOCAL_SHARED_ENV_FILE="config/local/${AZURE_ENVIRONMENT}.env"
+
+if [[ ! -f "${SHARED_ENV_FILE}" ]]; then
+  echo "FATAL: Missing ${SHARED_ENV_FILE}. Run 'make config-bootstrap ENV=${AZURE_ENVIRONMENT}' first." >&2
+  exit 1
+fi
+
+set -a
+source "${SHARED_ENV_FILE}"
+if [[ -f "${LOCAL_SHARED_ENV_FILE}" ]]; then
+  source "${LOCAL_SHARED_ENV_FILE}"
+fi
+set +a
+
+# Resolve and validate naming contract from single source of truth
+if [[ -f "scripts/naming-contract.sh" ]]; then
+  export ENV_NAME="${AZURE_ENVIRONMENT}"
+  eval "$(scripts/naming-contract.sh export)"
+  scripts/naming-contract.sh validate >/dev/null
+  echo "Naming contract: RG=${AZURE_RESOURCE_GROUP} CAE=${AZURE_CONTAINERAPPS_ENV} ACR=${AZURE_ACR_NAME} KV=${AZURE_KEY_VAULT_NAME} NFS=${NFS_SA_NAME}"
+else
+  echo "FATAL: Missing scripts/naming-contract.sh" >&2
+  exit 1
 fi
 
 AZURE_ENVIRONMENT="${AZURE_ENVIRONMENT:-dev}"
@@ -91,44 +118,53 @@ AZURE_LOCATION="${AZURE_LOCATION:-eastus}"
 AZURE_OWNER_SLUG="${AZURE_OWNER_SLUG:-platform}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 SIGNAL_PROXY_AUTH_TOKEN="${SIGNAL_PROXY_AUTH_TOKEN:-}"
+ALLOW_PROD_DESTRUCTIVE="${ALLOW_PROD_DESTRUCTIVE:-false}"
+ALLOW_PROTECTED_DESTRUCTIVE="${ALLOW_PROTECTED_DESTRUCTIVE:-false}"
+BREAK_GLASS_TICKET="${BREAK_GLASS_TICKET:-}"
 
 # Derived names — overridable via env file for non-standard naming (e.g. prod)
-RG_NAME="${AZURE_RESOURCE_GROUP:-rg-openclaw-shared-${AZURE_ENVIRONMENT}}"
-CAE_NAME="${AZURE_CONTAINERAPPS_ENV:-cae-openclaw-shared-${AZURE_ENVIRONMENT}}"
-ACR_NAME="${AZURE_ACR_NAME:-openclawshared${AZURE_ENVIRONMENT}acr}"
-KV_NAME="${AZURE_KEY_VAULT_NAME:-kvopenclawshared${AZURE_ENVIRONMENT}}"
-NFS_SA_NAME="${NFS_SA_NAME:-nfsopenclawshared${AZURE_ENVIRONMENT}}"
-CAE_NFS_STORAGE_NAME="${CAE_NFS_STORAGE_NAME:-openclaw-nfs}"
+RG_NAME="${AZURE_RESOURCE_GROUP}"
+CAE_NAME="${AZURE_CONTAINERAPPS_ENV}"
+ACR_NAME="${AZURE_ACR_NAME}"
+KV_NAME="${AZURE_KEY_VAULT_NAME}"
+NFS_SA_NAME="${NFS_SA_NAME}"
+CAE_NFS_STORAGE_NAME="${CAE_NFS_STORAGE_NAME}"
 
 # Remote state backend (provisioned by infra/bootstrap-state.sh)
-TF_STATE_RG="${TF_STATE_RG:-rg-openclaw-tfstate-${AZURE_ENVIRONMENT}}"
-TF_STATE_SA="${TF_STATE_SA:-tfopenclawstate${AZURE_ENVIRONMENT}}"
-TF_BACKEND_ARGS="-backend-config=resource_group_name=${TF_STATE_RG} -backend-config=storage_account_name=${TF_STATE_SA}"
+TF_STATE_RG="${TF_STATE_RG}"
+TF_STATE_SA="${TF_STATE_SA}"
+TF_STATE_KEY="${TF_STATE_KEY}"
+TF_BACKEND_ARGS="-backend-config=resource_group_name=${TF_STATE_RG} -backend-config=storage_account_name=${TF_STATE_SA} -backend-config=key=${TF_STATE_KEY}"
 
 # ---------------------------------------------------------------------------
-# Discover all users from .env.user.* files
+# Discover all users from config/users/*.env files
 # ---------------------------------------------------------------------------
 discover_users() {
   local users=()
-  for f in .env.user.*; do
-    # Skip the example file and any editor backups
-    [[ "$f" == ".env.user.example" ]] && continue
+  for f in config/users/*.env; do
+    # Skip templates and editor backups
+    [[ "$f" == "config/users/user.example.env" ]] && continue
     [[ "$f" == *.swp ]] || [[ "$f" == *~ ]] && continue
     [[ ! -f "$f" ]] && continue
-    # Extract slug from filename: .env.user.alice → alice
-    local slug="${f#.env.user.}"
+    # Extract slug from filename: config/users/alice.env -> alice
+    local slug
+    slug="$(basename "$f" .env)"
     users+=("$slug")
   done
   echo "${users[@]}"
 }
 
-# Source a user's env file, overlaying on top of the shared env
+# Source a user's env file (+ optional local override), overlaying shared env
 load_user_env() {
   local slug="$1"
-  local user_file=".env.user.${slug}"
+  local user_file="config/users/${slug}.env"
+  local local_user_file="config/local/${AZURE_ENVIRONMENT}.${slug}.env"
   if [[ -f "$user_file" ]]; then
     set -a
     source "$user_file"
+    if [[ -f "$local_user_file" ]]; then
+      source "$local_user_file"
+    fi
     set +a
   fi
 }
@@ -147,8 +183,74 @@ warn() { echo -e "${YELLOW}WARNING: $1${NC}"; }
 ok()   { echo -e "${GREEN}OK: $1${NC}"; }
 fail() { echo -e "${RED}FAILED: $1${NC}"; exit 1; }
 
+is_true() {
+  [[ "${1:-}" == "true" ]]
+}
+
+is_protected_context() {
+  local ref="${GITHUB_REF_NAME:-${GITHUB_REF:-${CI_COMMIT_REF_NAME:-}}}"
+  if [[ -n "${PROTECTED_RUNNER:-}" ]] && is_true "${PROTECTED_RUNNER}"; then
+    return 0
+  fi
+  if is_true "${CI:-false}" || [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+    if [[ "$ref" =~ ^(main|master|prod|production|release/.+)$ ]]; then
+      return 0
+    fi
+  fi
+  return 1
+}
+
+require_prod_guardrails() {
+  if [[ "${AZURE_ENVIRONMENT}" != "prod" ]]; then
+    return 0
+  fi
+
+  is_true "${ALLOW_PROD_DESTRUCTIVE}" || fail "Prod reset is blocked. Set ALLOW_PROD_DESTRUCTIVE=true to continue."
+
+  if [[ ! "${BREAK_GLASS_TICKET}" =~ ^(INC|CHG)-[0-9]+$ ]]; then
+    fail "Prod reset requires BREAK_GLASS_TICKET in format INC-12345 or CHG-12345."
+  fi
+
+  if is_protected_context && ! is_true "${ALLOW_PROTECTED_DESTRUCTIVE}"; then
+    fail "Prod reset in protected branch/runner context is blocked. Set ALLOW_PROTECTED_DESTRUCTIVE=true to override."
+  fi
+}
+
+confirm_prod_destructive() {
+  if [[ "${AZURE_ENVIRONMENT}" != "prod" ]]; then
+    return 0
+  fi
+
+  [[ -t 0 ]] || fail "Prod destructive operations require an interactive terminal."
+
+  warn "PRODUCTION DESTRUCTIVE MODE"
+  warn "Break-glass ticket: ${BREAK_GLASS_TICKET}"
+  warn "Target resource group: ${RG_NAME}"
+  echo ""
+
+  local typed_env typed_rg typed_phrase
+  echo -n "Type environment name to continue (prod): "
+  read -r typed_env
+  [[ "$typed_env" == "prod" ]] || fail "Environment confirmation failed."
+
+  echo -n "Type target resource group to continue (${RG_NAME}): "
+  read -r typed_rg
+  [[ "$typed_rg" == "${RG_NAME}" ]] || fail "Resource group confirmation failed."
+
+  echo -n "Type confirmation phrase (DESTROY-PROD-OPENCLAW): "
+  read -r typed_phrase
+  [[ "$typed_phrase" == "DESTROY-PROD-OPENCLAW" ]] || fail "Confirmation phrase mismatch."
+}
+
+log_destructive_context() {
+  local mode="$1"
+  local ts
+  ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  echo "[$ts] mode=${mode} env=${AZURE_ENVIRONMENT} rg=${RG_NAME} subscription=${SUB_ID} operator=$(whoami) ticket=${BREAK_GLASS_TICKET}" | tee -a "/tmp/openclaw-destructive-${AZURE_ENVIRONMENT}.log"
+}
+
 confirm() {
-  if [[ "$FORCE" == "true" ]]; then return 0; fi
+  if [[ "$FORCE" == "true" ]] && [[ "${AZURE_ENVIRONMENT}" != "prod" ]]; then return 0; fi
   echo -en "${YELLOW}$1 [y/N]: ${NC}"
   read -r response
   [[ "$response" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
@@ -225,10 +327,12 @@ echo "Resource Group: ${RG_NAME}"
 echo "Environment: ${AZURE_ENVIRONMENT}"
 echo "Location: ${AZURE_LOCATION}"
 
+require_prod_guardrails
+
 # Discover users
 USERS=($(discover_users))
 if [[ ${#USERS[@]} -eq 0 ]]; then
-  warn "No .env.user.* files found — no per-user operations will be performed"
+  warn "No config/users/*.env files found — no per-user operations will be performed"
 else
   echo "Users discovered: ${USERS[*]}"
 fi
@@ -260,7 +364,6 @@ nuke() {
     # Select the user's TF workspace
     if terraform -chdir=infra/user-app workspace select "${slug}" 2>/dev/null; then
       export TF_VAR_compass_api_key="placeholder"
-      export TF_VAR_openclaw_gateway_auth_token="placeholder"
       terraform -chdir=infra/user-app destroy -auto-approve \
         -var="user_slug=${slug}" \
         -var="environment=${AZURE_ENVIRONMENT}" \
@@ -410,12 +513,12 @@ rebuild() {
     echo "NOTE: If this is a fresh deployment, run 'make signal-register' to register your bot number."
   else
     acr_firewall_deny
-    warn "SIGNAL_BOT_NUMBER not set in .env.azure.${AZURE_ENVIRONMENT} — skipping Signal stack"
+    warn "SIGNAL_BOT_NUMBER not set in ${SHARED_ENV_FILE} — skipping Signal stack"
   fi
 
   step "Step 8: Deploy user container apps (all users)"
   if [[ ${#USERS[@]} -eq 0 ]]; then
-    warn "No .env.user.* files found — skipping user app deployment"
+    warn "No config/users/*.env files found — skipping user app deployment"
   else
     IMAGE_REF="${ACR_NAME}.azurecr.io/openclaw-golden:${IMAGE_TAG}"
     terraform -chdir=infra/user-app init -input=false
@@ -429,14 +532,12 @@ rebuild() {
       echo -e "\n${CYAN}--- Deploying user: ${slug} ---${NC}"
 
       # Source the user's env file for per-user overrides
-      # (SIGNAL_USER_PHONE, COMPASS_API_KEY, OPENCLAW_GATEWAY_AUTH_TOKEN)
+      # (SIGNAL_USER_PHONE, COMPASS_API_KEY)
       load_user_env "$slug"
 
       # Read per-user values (may have been overridden by load_user_env)
       local_signal_user_phone="${SIGNAL_USER_PHONE:-}"
       local_compass_api_key="${COMPASS_API_KEY:-placeholder}"
-      local_gw_auth_token="${OPENCLAW_GATEWAY_AUTH_TOKEN:-placeholder}"
-
       # Select or create the user's TF workspace
       terraform -chdir=infra/user-app workspace select -or-create "${slug}"
 
@@ -451,7 +552,6 @@ rebuild() {
       fi
 
       export TF_VAR_compass_api_key="${local_compass_api_key}"
-      export TF_VAR_openclaw_gateway_auth_token="${local_gw_auth_token}"
       terraform -chdir=infra/user-app apply -auto-approve \
         -var="user_slug=${slug}" \
         -var="environment=${AZURE_ENVIRONMENT}" \
@@ -467,10 +567,13 @@ rebuild() {
         || warn "User app deploy for '${slug}' had issues"
       ok "User app ca-openclaw-${AZURE_ENVIRONMENT}-${slug} deployed"
 
-      # Re-source the shared env to reset overrides before next user
-      if [[ -f ".env.azure.${AZURE_ENVIRONMENT}" ]]; then
+      # Re-source shared env layers to reset overrides before next user
+      if [[ -f "${SHARED_ENV_FILE}" ]]; then
         set -a
-        source ".env.azure.${AZURE_ENVIRONMENT}"
+        source "${SHARED_ENV_FILE}"
+        if [[ -f "${LOCAL_SHARED_ENV_FILE}" ]]; then
+          source "${LOCAL_SHARED_ENV_FILE}"
+        fi
         set +a
       fi
     done
@@ -515,10 +618,21 @@ rebuild() {
 # Main
 # ===========================================================================
 if [[ "$REBUILD_ONLY" == "true" ]]; then
+  if [[ "${AZURE_ENVIRONMENT}" == "prod" ]]; then
+    log_destructive_context "rebuild-only"
+  fi
   rebuild
 elif [[ "$NUKE_ONLY" == "true" ]]; then
+  if [[ "${AZURE_ENVIRONMENT}" == "prod" ]]; then
+    log_destructive_context "nuke-only"
+    confirm_prod_destructive
+  fi
   nuke
 else
+  if [[ "${AZURE_ENVIRONMENT}" == "prod" ]]; then
+    log_destructive_context "full-rebuild"
+    confirm_prod_destructive
+  fi
   nuke
   echo ""
   confirm "Nuke complete. Proceed with rebuild?"
