@@ -8,7 +8,7 @@ Use this when a destructive infrastructure change is required
 
 - Azure CLI authenticated (`az login`)
 - Terraform 1.5+ installed
-- Layered config populated under `config/` (`make config-bootstrap ENV=<env> U=<slug>`)
+- Layered config populated under `config/` (`./platform/cli/ocp config bootstrap --env <env> --user <slug>`)
 - Per-user overlays in `config/users/<slug>.env` (see `config/users/user.example.env`)
 - Your public IPs for deployer allowlisting (see Step 5)
 
@@ -118,8 +118,8 @@ Key details for manual recreation:
 For each user with a `config/users/<slug>.env` file:
 
 ```bash
-make remove-user U=alice
-make remove-user U=bob
+./platform/cli/ocp user remove --env dev --user alice
+./platform/cli/ocp user remove --env dev --user bob
 ```
 
 This removes `ca-openclaw-<env>-<slug>` and its KV secrets.
@@ -133,7 +133,7 @@ az containerapp delete -n ca-graph-mcp-gw-<slug> -g rg-openclaw-<env> --yes
 ### 3. Destroy shared infrastructure
 
 ```bash
-make deploy-destroy
+./platform/cli/ocp deploy shared --env dev --destroy
 ```
 
 This destroys: CAE, VNet, subnets, NSG, private endpoints, DNS zones,
@@ -243,8 +243,8 @@ az acr update -n <acr-name> --default-action Deny
 For each user with a `config/users/<slug>.env` file:
 
 ```bash
-make add-user U=alice
-make add-user U=bob
+./platform/cli/ocp deploy user --env dev --user alice
+./platform/cli/ocp deploy user --env dev --user bob
 ```
 
 The container app is created with `storage_type = "AzureFile"` (provider
@@ -310,7 +310,7 @@ For a scripted version of the above, use `ocp reset`. It discovers all users fro
 ./platform/cli/ocp reset --env dev --rebuild-only
 ```
 
-Or use Makefile aliases:
+Or use Makefile aliases (these are `make`-only shortcuts with no direct `ocp` equivalent):
 
 ```bash
 make nuke-all ENV=dev

@@ -7,8 +7,9 @@ Shared-platform, per-user isolated deployment of [OpenClaw](https://github.com/o
 | Guide | Path |
 |-------|------|
 | First-time setup | [`docs/onboarding/quickstart.md`](docs/onboarding/quickstart.md) |
-| Day-2 operations | [`docs/runbooks/day-2-operations.md`](docs/runbooks/day-2-operations.md) |
 | Production deployment | [`docs/runbooks/production-deploy.md`](docs/runbooks/production-deploy.md) |
+| Container runtime | [`docs/architecture/container-runtime.md`](docs/architecture/container-runtime.md) |
+| Teams relay & manifest | [`docs/architecture/teams-relay.md`](docs/architecture/teams-relay.md) |
 | Signal messaging stack | [`docs/architecture/signal-stack.md`](docs/architecture/signal-stack.md) |
 | Observability & KQL | [`docs/runbooks/observability.md`](docs/runbooks/observability.md) |
 | Destructive reset flow | [`docs/runbooks/platform-reset.md`](docs/runbooks/platform-reset.md) |
@@ -148,26 +149,20 @@ Run `make naming-check ENV=<env>` before deploy/destroy operations to validate n
 
 ## Teams App Manifest
 
-Teams app metadata is environment-specific and generated from templates in `teams-app/`. Key commands:
+Teams app metadata is environment-specific and generated from templates in `teams-app/`. See [`docs/architecture/teams-relay.md`](docs/architecture/teams-relay.md) for the full relay architecture.
 
 ```bash
-make teams-manifest ENV=dev        # Render manifest
-make teams-validate ENV=dev        # Validate manifest
-make teams-package  ENV=prod       # Build distributable zip
-make teams-release-check           # Full local release gate
+./platform/cli/ocp teams manifest --env dev     # Render manifest
+./platform/cli/ocp teams validate --env dev     # Validate manifest
+./platform/cli/ocp teams package --env prod     # Build distributable zip
+./platform/cli/ocp teams release-check          # Full local release gate
 ```
 
 Output artifacts are written to `teams-app/dist/<env>/` (git-ignored). Overlay content changes should include an explicit `version` bump.
 
 ## Golden Image
 
-The golden image (`Dockerfile.wrapper`) wraps the upstream OpenClaw image with enterprise configuration. On every boot, `entrypoint.sh`:
-
-1. Sets per-user data root on the NFS volume
-2. Assembles `openclaw.json` from `config/openclaw.json.template` with schema-safe validation
-3. Fail-fast validates channel credentials (Signal or Teams required in Azure mode)
-4. Copies baked-in workspace files and resolves `${GRAPH_MCP_URL}` placeholders via `envsubst`
-5. Starts the OpenClaw gateway on `0.0.0.0:18789`
+The golden image (`Dockerfile.wrapper`) wraps the upstream OpenClaw image with enterprise configuration. See [`docs/architecture/container-runtime.md`](docs/architecture/container-runtime.md) for the full boot sequence and proxy architecture.
 
 Upgrade: update the `FROM` digest in `Dockerfile.wrapper`, then `make build-image ENV=prod IMAGE_TAG=v2.0.0`.
 Rollback: `IMAGE_TAG=v1.0.0 ./platform/cli/ocp deploy user --env prod --user alice`.
@@ -250,9 +245,10 @@ make docker-down      # Stop and remove volumes
 |   +-- onboarding/
 |   |   +-- quickstart.md        # First-time setup path
 |   +-- architecture/
+|   |   +-- container-runtime.md # Boot sequence, proxy, golden image
+|   |   +-- teams-relay.md       # Teams relay + manifest system
 |   |   +-- signal-stack.md      # Signal messaging architecture
 |   +-- runbooks/
-|       +-- day-2-operations.md  # Standard operational commands
 |       +-- production-deploy.md # Production deployment guide
 |       +-- observability.md     # KQL queries and log analytics
 |       +-- platform-reset.md   # Canonical reset command flow

@@ -40,8 +40,8 @@ SIGNAL_HTTP_URL = ${SIGNAL_CLI_URL}/user/${SIGNAL_USER_PHONE}/${SIGNAL_PROXY_AUT
 # SIGNAL_BOT_NUMBER=+15551234567
 # SIGNAL_PROXY_AUTH_TOKEN=<random-token>
 
-make signal-build          # Build & push signal-proxy image to ACR
-make signal-deploy         # Deploy signal-cli + signal-proxy via Terraform
+./platform/cli/ocp signal build --env dev      # Build & push signal-proxy image to ACR
+./platform/cli/ocp signal deploy --env dev     # Deploy signal-cli + signal-proxy via Terraform
 ```
 
 ## Deploying Signal (Prod -- via az CLI)
@@ -51,7 +51,7 @@ When shared infrastructure has no Terraform state (provisioned externally), depl
 **1. Build and push the signal-proxy image:**
 
 ```bash
-make signal-build ENV=prod
+./platform/cli/ocp signal build --env prod
 ```
 
 **2. Deploy signal-cli:**
@@ -107,7 +107,7 @@ Signal requires CAPTCHA verification for new number registrations:
 4. Open a shell in the signal-cli container:
 
 ```bash
-make signal-register ENV=prod
+./platform/cli/ocp signal register --env prod
 # Or directly:
 az containerapp exec -n ca-signal-cli-prod -g rg-openclaw-prod --command /bin/sh
 ```
