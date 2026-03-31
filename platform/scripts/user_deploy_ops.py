@@ -2,118 +2,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from common import (
+    REQUIRED_SHARED_KEYS,
+    discover_deployer_ips,
+    ensure_shared_requirements,
+    ensure_terraform_provider_auth,
+    has_active_az_session,
+    resolve_nfs_storage_account,
+)
 from env_loader import load_layered_env
 from naming import resolve_and_validate_naming
 from runner import run, run_capture, run_quiet
 from signal_ops import signal_update_phones
-
-
-REQUIRED_SHARED_KEYS = [
-    "AZURE_LOCATION",
-    "COMPASS_API_KEY",
-    "OPENCLAW_GATEWAY_AUTH_TOKEN",
-]
-
-
-def _discover_deployer_ips(repo_root: Path) -> str:
-    script = (
-        "ip1=$(curl -s --connect-timeout 5 ifconfig.me 2>/dev/null || true); "
-        "ip2=$(curl -s --connect-timeout 5 https://api.ipify.org 2>/dev/null || true); "
-        'if [ -z "$ip1" ] && [ -z "$ip2" ]; then echo ""; '
-        'elif [ "$ip1" = "$ip2" ] || [ -z "$ip2" ]; then echo "$ip1"; '
-        'elif [ -z "$ip1" ]; then echo "$ip2"; '
-        'else echo "$ip1,$ip2"; fi'
-    )
-    return run_capture(["bash", "-lc", script], repo_root)
-
-
-def _ensure_terraform_provider_auth(repo_root: Path, context: dict[str, str]) -> None:
-    rc = run_quiet(
-        [
-            "terraform",
-            "-chdir=infra/shared",
-            "providers",
-            "schema",
-            "-json",
-        ],
-        repo_root,
-        env=context,
-    )
-    if rc != 0:
-        raise RuntimeError(
-            "Terraform provider auth check failed. Refresh Azure auth (az logout && az login) and retry."
-        )
-
-
-def _has_active_az_session(repo_root: Path, context: dict[str, str]) -> bool:
-    return (
-        run_quiet(["az", "account", "show", "--output", "none"], repo_root, env=context)
-        == 0
-    )
-
-
-def _resolve_nfs_storage_account(repo_root: Path, context: dict[str, str]) -> str:
-    rg = context.get("AZURE_RESOURCE_GROUP", "")
-    configured = context.get("NFS_SA_NAME", "")
-    if configured:
-        rc = run_quiet(
-            [
-                "az",
-                "storage",
-                "account",
-                "show",
-                "--name",
-                configured,
-                "--resource-group",
-                rg,
-                "--output",
-                "none",
-            ],
-            repo_root,
-            env=context,
-        )
-        if rc == 0:
-            return configured
-
-    try:
-        discovered = run_capture(
-            [
-                "terraform",
-                "-chdir=infra/shared",
-                "output",
-                "-json",
-                "nfs_storage_account_name",
-            ],
-            repo_root,
-            env=context,
-        ).strip('"')
-    except Exception:
-        discovered = ""
-
-    if discovered:
-        rc = run_quiet(
-            [
-                "az",
-                "storage",
-                "account",
-                "show",
-                "--name",
-                discovered,
-                "--resource-group",
-                rg,
-                "--output",
-                "none",
-            ],
-            repo_root,
-            env=context,
-        )
-        if rc == 0:
-            return discovered
-
-    raise RuntimeError(
-        "Could not resolve accessible NFS storage account. "
-        "Set NFS_SA_NAME in config/env/<env>.env or ensure infra/shared output nfs_storage_account_name is available."
-    )
 
 
 def _discover_graph_mcp_url(
@@ -146,16 +46,6 @@ def _discover_graph_mcp_url(
         return f"http://{fqdn}"
     print(f"WARNING: MCP gateway {app_name} not found. Using placeholder.")
     return "placeholder"
-
-
-def _ensure_shared_requirements(env_map: dict[str, str]) -> None:
-    missing = [key for key in REQUIRED_SHARED_KEYS if not env_map.get(key)]
-    if missing:
-        raise RuntimeError(
-            "Missing required shared config keys: "
-            + ", ".join(missing)
-            + " (set them in config/env/<env>.env or config/local/<env>.env)"
-        )
 
 
 def _prepare_context(repo_root: Path, env_name: str, user: str) -> dict[str, str]:
@@ -219,7 +109,7 @@ def _open_firewalls(
     repo_root: Path, context: dict[str, str], deployer_ips: str
 ) -> None:
     rg = context.get("AZURE_RESOURCE_GROUP", "")
-    nfs_sa = _resolve_nfs_storage_account(repo_root, context)
+    nfs_sa = resolve_nfs_storage_account(repo_root, context)
     kv = context.get("AZURE_KEY_VAULT_NAME", "")
     print("--- Opening firewalls for Terraform ---")
     print(f"Detected deployer IPs: {deployer_ips}")
@@ -267,7 +157,7 @@ def _close_firewalls(
     repo_root: Path, context: dict[str, str], deployer_ips: str
 ) -> None:
     rg = context.get("AZURE_RESOURCE_GROUP", "")
-    nfs_sa = _resolve_nfs_storage_account(repo_root, context)
+    nfs_sa = resolve_nfs_storage_account(repo_root, context)
     kv = context.get("AZURE_KEY_VAULT_NAME", "")
     print("--- Closing firewalls ---")
     run(
@@ -351,11 +241,11 @@ def _tf_user_env(
 
 def deploy_user(repo_root: Path, env_name: str, user: str, plan: bool) -> int:
     context = _prepare_context(repo_root, env_name, user)
-    _ensure_shared_requirements(context)
+    ensure_shared_requirements(context)
 
-    if not _has_active_az_session(repo_root, context):
+    if not has_active_az_session(repo_root, context):
         raise RuntimeError("Azure CLI session is not active. Run 'az login' and retry.")
-    _ensure_terraform_provider_auth(repo_root, context)
+    ensure_terraform_provider_auth(repo_root, context)
 
     run(["terraform", "-chdir=infra/user-app", "init"], repo_root, env=context)
     run(
@@ -422,7 +312,7 @@ def deploy_user(repo_root: Path, env_name: str, user: str, plan: bool) -> int:
         msteams_app_password_secret_id_tf = ""
 
     graph_mcp_url = _discover_graph_mcp_url(repo_root, env_name, user, context)
-    deployer_ips = _discover_deployer_ips(repo_root)
+    deployer_ips = discover_deployer_ips(repo_root)
 
     tf_env = _tf_user_env(context, signal_proxy_auth_token_tf, signal_cli_url_tf)
     tf_env["TF_VAR_msteams_app_password_secret_id"] = msteams_app_password_secret_id_tf
@@ -454,9 +344,9 @@ def deploy_user(repo_root: Path, env_name: str, user: str, plan: bool) -> int:
 def remove_user(repo_root: Path, env_name: str, user: str) -> int:
     context = _prepare_context(repo_root, env_name, user)
 
-    if not _has_active_az_session(repo_root, context):
+    if not has_active_az_session(repo_root, context):
         raise RuntimeError("Azure CLI session is not active. Run 'az login' and retry.")
-    _ensure_terraform_provider_auth(repo_root, context)
+    ensure_terraform_provider_auth(repo_root, context)
 
     run(["terraform", "-chdir=infra/user-app", "init"], repo_root, env=context)
     run(
@@ -472,7 +362,7 @@ def remove_user(repo_root: Path, env_name: str, user: str) -> int:
         env=context,
     )
 
-    deployer_ips = _discover_deployer_ips(repo_root)
+    deployer_ips = discover_deployer_ips(repo_root)
 
     print("=============================================")
     print(f" Destroying user app: ca-openclaw-{env_name}-{user}")
@@ -538,11 +428,11 @@ def import_user(
     azure_resource_id: str,
 ) -> int:
     context = _prepare_context(repo_root, env_name, user)
-    _ensure_shared_requirements(context)
+    ensure_shared_requirements(context)
 
-    if not _has_active_az_session(repo_root, context):
+    if not has_active_az_session(repo_root, context):
         raise RuntimeError("Azure CLI session is not active. Run 'az login' and retry.")
-    _ensure_terraform_provider_auth(repo_root, context)
+    ensure_terraform_provider_auth(repo_root, context)
 
     run(["terraform", "-chdir=infra/user-app", "init"], repo_root, env=context)
     run(
@@ -609,7 +499,7 @@ def import_user(
         msteams_app_password_secret_id_tf = ""
 
     graph_mcp_url = _discover_graph_mcp_url(repo_root, env_name, user, context)
-    deployer_ips = _discover_deployer_ips(repo_root)
+    deployer_ips = discover_deployer_ips(repo_root)
 
     tf_env = _tf_user_env(context, signal_proxy_auth_token_tf, signal_cli_url_tf)
     tf_env["TF_VAR_msteams_app_password_secret_id"] = msteams_app_password_secret_id_tf

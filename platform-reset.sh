@@ -586,7 +586,7 @@ rebuild() {
       echo "  Backup: /tmp/graph-mcp-backup-${slug}.json"
     fi
   done
-  echo "See REBUILD.md Step 9 for the az containerapp create command."
+  echo "See docs/runbooks/platform-reset.md for the az containerapp create command."
 
   step "Step 10: (Optional) Lock down deployer IP access"
   confirm "Remove deployer IP allowlist and lock down public access?"
@@ -611,7 +611,7 @@ rebuild() {
   echo "Users deployed: ${USERS[*]:-none}"
   echo ""
   echo "Remaining manual step: recreate ca-graph-mcp-gw-<env>-<slug> for each user."
-  echo "See REBUILD.md Step 9 for details."
+  echo "See docs/runbooks/platform-reset.md for details."
 }
 
 # ===========================================================================

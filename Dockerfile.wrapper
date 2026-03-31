@@ -11,7 +11,7 @@ FROM ghcr.io/openclaw/openclaw:2026.3.28
 USER root
 
 # Install nano editor for in-container config editing, and gettext-base for envsubst
-# (envsubst resolves ${VAR} placeholders in openclaw.json.example at first boot)
+# (envsubst resolves ${VAR} placeholders in openclaw.json.template at first boot)
 RUN apt-get update && apt-get install -y --no-install-recommends nano gettext-base && rm -rf /var/lib/apt/lists/*
 
 # Create directories for config and persistent data
@@ -22,7 +22,7 @@ RUN mkdir -p /app/config /app/data/.openclaw && \
 RUN ln -sf /app/openclaw.mjs /usr/local/bin/openclaw
 
 # Copy enterprise baseline configuration, workspace template, proxy, and entrypoint
-COPY openclaw.json.example /app/config/openclaw.json.example
+COPY config/openclaw.json.template /app/config/openclaw.json.template
 COPY scripts/build-openclaw-config.py /app/scripts/build-openclaw-config.py
 COPY workspace/ /app/config/workspace/
 COPY loopback-proxy.mjs /app/loopback-proxy.mjs

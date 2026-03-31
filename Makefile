@@ -331,7 +331,7 @@ deploy-all: deploy build-image ## 1-Click: Shared Infra + Golden Image + Signal 
 	@IMAGE_REF=$(IMAGE_REF) $(MAKE) add-user
 
 # ===========================================================================
-# PLATFORM RESET (see REBUILD.md for full details)
+# PLATFORM RESET (see docs/runbooks/platform-reset.md for full details)
 # These operate on ALL users discovered from config/users/*.env.
 # ===========================================================================
 

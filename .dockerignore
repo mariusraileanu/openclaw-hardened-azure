@@ -6,7 +6,7 @@ infra
 signal-proxy
 teams-relay
 *.md
-!openclaw.json.example
+!config/openclaw.json.template
 !workspace/**/*.md
 
 # Secrets and state — never send to build context
