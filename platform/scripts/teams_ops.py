@@ -171,10 +171,11 @@ def teams_relay_deploy(repo_root: Path, env_name: str) -> int:
 
     target_args = [
         "-target=azurerm_subnet.func",
-        "-target=azurerm_storage_account.func",
-        "-target=azurerm_storage_container.func_deploy",
+        "-target=azapi_resource.func_storage",
+        "-target=azapi_resource.func_deploy_container",
+        "-target=azurerm_role_assignment.func_storage_blob",
         "-target=azurerm_service_plan.relay",
-        "-target=azurerm_function_app_flex_consumption.relay",
+        "-target=azurerm_linux_function_app.relay",
         "-target=azurerm_bot_service_azure_bot.shared",
         "-target=azurerm_bot_channel_ms_teams.shared",
         "-target=azurerm_key_vault_secret.msteams_app_password",

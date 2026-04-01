@@ -174,3 +174,9 @@ variable "func_relay_name" {
   type        = string
   default     = ""
 }
+
+variable "bot_name" {
+  description = "Override the Azure Bot Service name (globally unique in Bot Framework). Defaults to bot-openclaw-{env}."
+  type        = string
+  default     = ""
+}

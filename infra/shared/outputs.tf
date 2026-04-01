@@ -50,7 +50,7 @@ output "key_vault_uri" {
 
 output "storage_account_name" {
   description = "Name of the shared storage account"
-  value       = azurerm_storage_account.shared.name
+  value       = azapi_resource.shared_storage.name
 }
 
 output "managed_identity_id" {
@@ -142,7 +142,7 @@ output "signal_proxy_auth_token" {
 # ---------------------------------------------------------------------------
 output "teams_relay_hostname" {
   description = "Public hostname of the Teams webhook relay Function App (empty if relay disabled)"
-  value       = var.msteams_relay_enabled ? azurerm_function_app_flex_consumption.relay[0].default_hostname : ""
+  value       = var.msteams_relay_enabled ? azurerm_linux_function_app.relay[0].default_hostname : ""
 }
 
 output "teams_relay_enabled" {

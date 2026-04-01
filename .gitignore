@@ -5,8 +5,11 @@
 *.tfstate
 *.tfstate.*
 *.tfplan
+tfplan-*
 *.tfvars
 !*.tfvars.example
+# Local backend override used when deploying to prod (local TF state)
+backend_override.tf
 
 # Node.js
 node_modules/

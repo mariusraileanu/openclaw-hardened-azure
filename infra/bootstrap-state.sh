@@ -121,22 +121,29 @@ else
   ok "Storage account created"
 fi
 
-# Ensure deployer IP is allowed through the firewall
+# Ensure deployer IP is allowed through the firewall.
+# Some subscriptions enforce a policy that blocks publicNetworkAccess=Enabled.
+# In that case we skip the firewall update — the SA stays private-only and all
+# subsequent operations use ARM APIs (which bypass the storage firewall).
 step "Storage firewall: allow deployer IP"
 az storage account network-rule add \
   --account-name "${SA_NAME}" \
   --resource-group "${RG_NAME}" \
   --ip-address "${DEPLOYER_IP}" \
   --output none 2>/dev/null || true
-# Enable default deny + allow Azure services
-az storage account update \
+if az storage account update \
   --name "${SA_NAME}" \
   --resource-group "${RG_NAME}" \
   --default-action Deny \
   --bypass AzureServices \
   --public-network-access Enabled \
-  --output none
-ok "Firewall: default deny + deployer IP allowed"
+  --output none 2>/dev/null; then
+  ok "Firewall: default deny + deployer IP allowed"
+  PRIVATE_ONLY=false
+else
+  skip "Policy blocks public network access — SA stays private-only (ARM operations still work)"
+  PRIVATE_ONLY=true
+fi
 
 # Grant current user Storage Blob Data Contributor on this account (for Azure AD auth)
 step "RBAC: Storage Blob Data Contributor for deployer"
@@ -187,20 +194,40 @@ fi
 
 # ---------------------------------------------------------------------------
 # 3. Blob Container (using Azure AD auth — no shared keys)
+#    Falls back to ARM API when the SA is private-only.
 # ---------------------------------------------------------------------------
 step "Blob Container: ${CONTAINER_NAME}"
 
-if az storage container show \
+CONTAINER_EXISTS=false
+if [[ "${PRIVATE_ONLY:-false}" == "true" ]]; then
+  # Data-plane calls fail when SA is private-only; check via ARM
+  SA_RESOURCE_ID=$(az storage account show --name "${SA_NAME}" --resource-group "${RG_NAME}" --query id -o tsv)
+  HTTP_STATUS=$(az rest --method GET \
+    --url "${SA_RESOURCE_ID}/blobServices/default/containers/${CONTAINER_NAME}?api-version=2023-05-01" \
+    --query name -o tsv 2>/dev/null) && CONTAINER_EXISTS=true
+else
+  az storage container show \
     --name "${CONTAINER_NAME}" \
     --account-name "${SA_NAME}" \
-    --auth-mode login >/dev/null 2>&1; then
+    --auth-mode login >/dev/null 2>&1 && CONTAINER_EXISTS=true
+fi
+
+if [[ "${CONTAINER_EXISTS}" == "true" ]]; then
   skip "Blob container already exists"
 else
-  az storage container create \
-    --name "${CONTAINER_NAME}" \
-    --account-name "${SA_NAME}" \
-    --auth-mode login \
-    --output none
+  if [[ "${PRIVATE_ONLY:-false}" == "true" ]]; then
+    # Use ARM API to create the container (bypasses storage firewall)
+    az rest --method PUT \
+      --url "${SA_RESOURCE_ID}/blobServices/default/containers/${CONTAINER_NAME}?api-version=2023-05-01" \
+      --body '{"properties": {}}' \
+      --output none
+  else
+    az storage container create \
+      --name "${CONTAINER_NAME}" \
+      --account-name "${SA_NAME}" \
+      --auth-mode login \
+      --output none
+  fi
   ok "Blob container created"
 fi
 

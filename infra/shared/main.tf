@@ -411,56 +411,91 @@ resource "azurerm_role_assignment" "kv_secrets_officer" {
 # ---------------------------------------------------------------------------
 # Storage Account (general purpose)
 # ---------------------------------------------------------------------------
-resource "azurerm_storage_account" "shared" {
-  name                       = local.sa_name
-  location                   = azurerm_resource_group.shared.location
-  resource_group_name        = azurerm_resource_group.shared.name
-  account_tier               = "Standard"
-  account_replication_type   = "LRS"
-  min_tls_version            = "TLS1_2"
-  https_traffic_only_enabled = true
-  tags                       = local.tags
+# Uses azapi instead of azurerm because the azurerm provider's data-plane
+# polling uses key-based auth which fails when shared_access_key_enabled=false
+# (required by Azure policy in prod subscription).
+resource "azapi_resource" "shared_storage" {
+  type      = "Microsoft.Storage/storageAccounts@2023-05-01"
+  name      = local.sa_name
+  location  = azurerm_resource_group.shared.location
+  parent_id = azurerm_resource_group.shared.id
+  tags      = local.tags
 
-  # NOTE: shared_access_key_enabled cannot be set to false because the
-  # azurerm provider uses key-based auth to read storage properties.
-  # TODO: revisit — azurerm v4.x supports AAD-based data-plane operations.
-
-  # Phase 4b: Blob soft delete (7-day recovery window)
-  blob_properties {
-    delete_retention_policy {
-      days = 7
+  body = {
+    kind = "StorageV2"
+    sku = {
+      name = "Standard_LRS"
     }
-    container_delete_retention_policy {
-      days = 7
+    properties = {
+      minimumTlsVersion        = "TLS1_2"
+      supportsHttpsTrafficOnly = true
+      publicNetworkAccess      = "Disabled"
+      allowSharedKeyAccess     = false
+      allowBlobPublicAccess    = false
+      networkAcls = {
+        defaultAction = "Deny"
+        bypass        = "AzureServices"
+        virtualNetworkRules = [
+          { id = azurerm_subnet.cae.id }
+        ]
+        ipRules = [for ip in local.deployer_ip_list : { value = ip }]
+      }
+      encryption = {
+        services = {
+          blob = { enabled = true }
+          file = { enabled = true }
+        }
+        keySource = "Microsoft.Storage"
+      }
     }
   }
 
-  network_rules {
-    default_action             = "Deny"
-    bypass                     = ["AzureServices"]
-    virtual_network_subnet_ids = [azurerm_subnet.cae.id]
-    ip_rules                   = local.deployer_ip_list
-  }
+  response_export_values = ["properties.primaryEndpoints.blob"]
 
-  # Phase 4c: Prevent accidental destruction of stateful storage
   lifecycle {
     prevent_destroy = true
     ignore_changes  = [tags["CreatedDate"]]
   }
 }
 
+# Blob soft-delete policy — set via azapi since the SA is managed by azapi
+resource "azapi_update_resource" "shared_storage_blob_service" {
+  type      = "Microsoft.Storage/storageAccounts/blobServices@2023-05-01"
+  name      = "default"
+  parent_id = azapi_resource.shared_storage.id
+
+  body = {
+    properties = {
+      deleteRetentionPolicy = {
+        enabled = true
+        days    = 7
+      }
+      containerDeleteRetentionPolicy = {
+        enabled = true
+        days    = 7
+      }
+    }
+  }
+}
+
+locals {
+  shared_sa_id = azapi_resource.shared_storage.id
+}
+
 # ---------------------------------------------------------------------------
 # Premium NFS FileStorage Account (persistent storage for Container Apps)
 # ---------------------------------------------------------------------------
 resource "azurerm_storage_account" "nfs" {
-  name                       = local.sa_nfs_name
-  location                   = azurerm_resource_group.shared.location
-  resource_group_name        = azurerm_resource_group.shared.name
-  account_tier               = "Premium"
-  account_kind               = "FileStorage"
-  account_replication_type   = "LRS"
-  min_tls_version            = "TLS1_2"
-  https_traffic_only_enabled = false # NFS requires this to be false
+  name                          = local.sa_nfs_name
+  location                      = azurerm_resource_group.shared.location
+  resource_group_name           = azurerm_resource_group.shared.name
+  account_tier                  = "Premium"
+  account_kind                  = "FileStorage"
+  account_replication_type      = "LRS"
+  min_tls_version               = "TLS1_2"
+  https_traffic_only_enabled    = false # NFS requires this to be false
+  public_network_access_enabled = false
+  shared_access_key_enabled     = false
 
   network_rules {
     default_action             = "Deny"
@@ -774,7 +809,7 @@ resource "azurerm_monitor_diagnostic_setting" "acr" {
 # blob/file/table/queue diagnostics require separate target resource IDs)
 resource "azurerm_monitor_diagnostic_setting" "storage" {
   name                       = "diag-storage-to-law"
-  target_resource_id         = azurerm_storage_account.shared.id
+  target_resource_id         = azapi_resource.shared_storage.id
   log_analytics_workspace_id = azurerm_log_analytics_workspace.shared.id
 
   enabled_metric {
@@ -1112,7 +1147,7 @@ resource "azurerm_subnet" "func" {
   delegation {
     name = "func-delegation"
     service_delegation {
-      name    = "Microsoft.App/environments"
+      name    = "Microsoft.Web/serverFarms"
       actions = ["Microsoft.Network/virtualNetworks/subnets/join/action"]
     }
   }
@@ -1121,30 +1156,61 @@ resource "azurerm_subnet" "func" {
 # ---------------------------------------------------------------------------
 # Storage account for Function App runtime (Flex Consumption uses blob)
 # ---------------------------------------------------------------------------
-resource "azurerm_storage_account" "func" {
-  count                      = var.msteams_relay_enabled ? 1 : 0
-  name                       = "strelayopenclaw${var.environment}"
-  location                   = azurerm_resource_group.shared.location
-  resource_group_name        = azurerm_resource_group.shared.name
-  account_tier               = "Standard"
-  account_replication_type   = "LRS"
-  min_tls_version            = "TLS1_2"
-  https_traffic_only_enabled = true
-  tags                       = local.tags
+# Uses azapi for the same shared-key-disabled compatibility reason as shared_storage above.
+resource "azapi_resource" "func_storage" {
+  count     = var.msteams_relay_enabled ? 1 : 0
+  type      = "Microsoft.Storage/storageAccounts@2023-05-01"
+  name      = "strelayopenclaw${var.environment}"
+  location  = azurerm_resource_group.shared.location
+  parent_id = azurerm_resource_group.shared.id
+  tags      = local.tags
+
+  body = {
+    kind = "StorageV2"
+    sku = {
+      name = "Standard_LRS"
+    }
+    properties = {
+      minimumTlsVersion        = "TLS1_2"
+      supportsHttpsTrafficOnly = true
+      publicNetworkAccess      = "Disabled"
+      allowSharedKeyAccess     = false
+      allowBlobPublicAccess    = false
+    }
+  }
+
+  response_export_values = ["properties.primaryEndpoints.blob"]
 
   lifecycle {
     ignore_changes = [tags["CreatedDate"]]
   }
 }
 
-resource "azurerm_storage_container" "func_deploy" {
-  count              = var.msteams_relay_enabled ? 1 : 0
-  name               = "function-deployments"
-  storage_account_id = azurerm_storage_account.func[0].id
+# Blob container for Function App deployment packages — created via azapi
+# since the parent SA is managed by azapi (avoids azurerm data-plane auth issues).
+resource "azapi_resource" "func_deploy_container" {
+  count     = var.msteams_relay_enabled ? 1 : 0
+  type      = "Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01"
+  name      = "function-deployments"
+  parent_id = "${azapi_resource.func_storage[0].id}/blobServices/default"
+
+  body = {
+    properties = {
+      publicAccess = "None"
+    }
+  }
+}
+
+# RBAC: managed identity needs blob access for Function App deployment storage
+resource "azurerm_role_assignment" "func_storage_blob" {
+  count                = var.msteams_relay_enabled ? 1 : 0
+  scope                = azapi_resource.func_storage[0].id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = azurerm_user_assigned_identity.shared.principal_id
 }
 
 # ---------------------------------------------------------------------------
-# Service Plan (Flex Consumption — FC1)
+# Service Plan (Elastic Premium EP1 — required for VNet integration)
 # ---------------------------------------------------------------------------
 resource "azurerm_service_plan" "relay" {
   count               = var.msteams_relay_enabled ? 1 : 0
@@ -1152,7 +1218,7 @@ resource "azurerm_service_plan" "relay" {
   location            = azurerm_resource_group.shared.location
   resource_group_name = azurerm_resource_group.shared.name
   os_type             = "Linux"
-  sku_name            = "FC1"
+  sku_name            = "EP1"
   tags                = local.tags
 
   lifecycle {
@@ -1161,45 +1227,60 @@ resource "azurerm_service_plan" "relay" {
 }
 
 # ---------------------------------------------------------------------------
-# Function App (Flex Consumption — Teams webhook relay)
+# Function App (Elastic Premium — Teams webhook relay)
 # ---------------------------------------------------------------------------
-resource "azurerm_function_app_flex_consumption" "relay" {
+# Uses Elastic Premium (EP1) with VNet integration to reach the internal CAE.
+# Regular Consumption (Y1) doesn't support VNet integration.  Flex Consumption
+# (FC1) was the original choice but prod policy enforces publicNetworkAccess=
+# Disabled and allowSharedKeyAccess=false on storage accounts, which breaks
+# Flex Consumption's Kudu-based deployment pipeline.  EP1 with
+# azurerm_linux_function_app supports `func azure functionapp publish`
+# through the Kudu SCM site (which uses ARM auth, not storage shared keys).
+resource "azurerm_linux_function_app" "relay" {
   count               = var.msteams_relay_enabled ? 1 : 0
   name                = var.func_relay_name != "" ? var.func_relay_name : "func-relay-${var.environment}"
   location            = azurerm_resource_group.shared.location
   resource_group_name = azurerm_resource_group.shared.name
   service_plan_id     = azurerm_service_plan.relay[0].id
 
-  runtime_name    = "node"
-  runtime_version = "20"
-
-  storage_container_type      = "blobContainer"
-  storage_container_endpoint  = "${azurerm_storage_account.func[0].primary_blob_endpoint}${azurerm_storage_container.func_deploy[0].name}"
-  storage_authentication_type = "StorageAccountConnectionString"
-  storage_access_key          = azurerm_storage_account.func[0].primary_access_key
+  storage_account_name          = azapi_resource.func_storage[0].name
+  storage_uses_managed_identity = true
 
   virtual_network_subnet_id = azurerm_subnet.func[0].id
 
-  maximum_instance_count = 2
-  instance_memory_in_mb  = 512
-
   app_settings = {
-    CAE_DEFAULT_DOMAIN    = azurerm_container_app_environment.shared.default_domain
-    ENVIRONMENT           = var.environment
-    OPENCLAW_HOST_PREFIX  = "ca-openclaw"
-    UPSTREAM_PORT         = "80"
-    UPSTREAM_HOST_STYLE   = "external"
-    MSTEAMS_USER_SLUG_MAP = var.msteams_user_slug_map
+    CAE_DEFAULT_DOMAIN               = azurerm_container_app_environment.shared.default_domain
+    ENVIRONMENT                      = var.environment
+    OPENCLAW_HOST_PREFIX             = "ca-openclaw"
+    UPSTREAM_PORT                    = "80"
+    UPSTREAM_HOST_STYLE              = "external"
+    MSTEAMS_USER_SLUG_MAP            = var.msteams_user_slug_map
+    WEBSITE_RUN_FROM_PACKAGE         = "1"
+    AzureWebJobsStorage__accountName = azapi_resource.func_storage[0].name
   }
 
   site_config {
     vnet_route_all_enabled = true
+
+    application_stack {
+      node_version = "20"
+    }
   }
+
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.shared.id]
+  }
+
+  key_vault_reference_identity_id = azurerm_user_assigned_identity.shared.id
 
   tags = local.tags
 
   lifecycle {
-    ignore_changes = [tags["CreatedDate"]]
+    ignore_changes = [
+      tags["CreatedDate"],
+      app_settings["WEBSITE_RUN_FROM_PACKAGE"],
+    ]
   }
 }
 
@@ -1216,7 +1297,7 @@ locals {
 
 resource "azurerm_bot_service_azure_bot" "shared" {
   count               = local.msteams_bot_enabled ? 1 : 0
-  name                = "bot-openclaw-${var.environment}"
+  name                = var.bot_name != "" ? var.bot_name : "bot-openclaw-${var.environment}"
   resource_group_name = azurerm_resource_group.shared.name
   location            = "global"
   sku                 = "F0"
@@ -1225,7 +1306,7 @@ resource "azurerm_bot_service_azure_bot" "shared" {
 
   microsoft_app_tenant_id = var.msteams_tenant_id
 
-  endpoint = "https://${azurerm_function_app_flex_consumption.relay[0].default_hostname}/api/messages"
+  endpoint = "https://${azurerm_linux_function_app.relay[0].default_hostname}/api/messages"
 
   tags = local.tags
 

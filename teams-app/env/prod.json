@@ -1,5 +1,6 @@
 {
   "version": "1.0.3",
+  "id": "73c7816a-b68f-42bc-b8ad-3f9237d13157",
   "name": {
     "short": "OpenClaw",
     "full": "OpenClaw Production Bot"
@@ -8,6 +9,14 @@
     "short": "AI assistant for Department of Health",
     "full": "OpenClaw AI assistant for Microsoft Teams production use."
   },
+  "bots": [
+    {
+      "botId": "73c7816a-b68f-42bc-b8ad-3f9237d13157",
+      "needsChannelSelector": false,
+      "isNotificationOnly": false,
+      "scopes": ["personal"]
+    }
+  ],
   "validDomains": [
     "func-relay-openclaw-prod.azurewebsites.net"
   ]

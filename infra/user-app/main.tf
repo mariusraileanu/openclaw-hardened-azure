@@ -256,7 +256,6 @@ resource "time_sleep" "rbac_propagation" {
     azurerm_role_assignment.acr_pull,
     azurerm_role_assignment.kv_secret_compass,
     azurerm_role_assignment.kv_secret_graph_mcp,
-    azurerm_role_assignment.kv_secret_gateway,
     azurerm_role_assignment.kv_secret_tavily,
     azurerm_role_assignment.kv_secret_msteams,
   ]
