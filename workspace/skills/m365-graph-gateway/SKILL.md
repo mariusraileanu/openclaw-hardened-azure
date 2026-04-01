@@ -23,7 +23,9 @@ already have everything you need:
 
 1. **`bash` (shell) tool** — run `curl` commands from this host.
 2. **Network access** — the gateway runs in the same VNet as this agent.
-3. **Pre-authenticated** — the gateway handles Microsoft auth; no tokens needed from you.
+3. **Gateway-managed auth** — the gateway handles Microsoft auth, but login may
+   require an interactive browser or device-code flow. No raw OAuth tokens are
+   required from the agent.
 
 > **If you find yourself telling the user "I don't have access to M365 tools"
 > or "no MCP tool is wired" — STOP. You are wrong. Use `curl`.** This is a
@@ -49,12 +51,51 @@ query syntax, and error code. Do not guess parameters — look them up.
 Below are copy-paste curl templates for the most common tasks. Replace date
 values with actual dates resolved from "today" in Asia/Dubai (UTC+4).
 
-### Check gateway health + auth
+### Check gateway health + auth endpoint
 
 ```bash
 curl -s ${GRAPH_MCP_URL}/health
 curl -s ${GRAPH_MCP_URL}/auth/status
 ```
+
+### Check auth via MCP `auth` tool (canonical)
+
+```bash
+curl -s -X POST ${GRAPH_MCP_URL}/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/call",
+    "params": {
+      "name": "auth",
+      "arguments": {
+        "action": "status"
+      }
+    }
+  }'
+```
+
+### Start interactive login (device code)
+
+```bash
+curl -s -X POST ${GRAPH_MCP_URL}/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/call",
+    "params": {
+      "name": "auth",
+      "arguments": {
+        "action": "login_device"
+      }
+    }
+  }'
+```
+
+When `login_device` succeeds, surface `verification_uri` and `user_code` to the
+user immediately. Then poll `auth` `status` until `logged_in` is `true`.
 
 ### Today's meetings
 
@@ -203,9 +244,10 @@ through this checklist:
      contact platform admin.
    - HTTP 200 with `"status":"ok"` → gateway is healthy, proceed.
 
-2. **Check auth**: `curl -s ${GRAPH_MCP_URL}/auth/status`
-   - `"authenticated":false` → gateway needs re-auth. Tell the user.
-   - `"authenticated":true` → gateway is ready.
+2. **Check auth via MCP tool**: call `auth` with `{"action":"status"}`
+   - `logged_in: true` → gateway is ready.
+   - `logged_in: false` and `device_code_pending: false` → start `login_device` and show `verification_uri` + `user_code`.
+   - `logged_in: false` and `device_code_pending: true` → prompt user to finish device-code verification and keep polling `status`.
 
 3. **Read TOOL_CONTRACT.md**: if you haven't already, read
    `references/TOOL_CONTRACT.md` for the exact tool name, parameters, and
@@ -269,15 +311,20 @@ If the gateway is not responding:
      zero or stopped. Ask the platform administrator to restart it.
    - HTTP 200 with `"status":"ok"`: the gateway is healthy.
 
-2. **Check auth**: `curl -s ${GRAPH_MCP_URL}/auth/status`
-   - If the response indicates no authenticated user: the gateway needs to be
-     re-authenticated. Contact the platform administrator.
+2. **Check auth via MCP tool**: call `auth` with `{"action":"status"}`
+   - If `logged_in` is false and no device flow is pending: call `auth` with
+     `{"action":"login_device"}` and show `verification_uri` + `user_code`
+     to the user.
+   - If `device_code_pending` is true: wait for user completion and keep polling
+     `status` until `logged_in` is true.
 
 3. **Parse error responses**: Every failed tool call returns an error in
    `content[0].text` with a `CODE: message` format. Common codes:
-   - `AUTH_REQUIRED` → call `auth` tool or escalate
-   - `VALIDATION_ERROR` → check your parameters against TOOL_CONTRACT.md
-   - `UPSTREAM_ERROR` → Microsoft Graph API issue, retry or escalate
+    - `AUTH_REQUIRED` / `AUTH_EXPIRED` → re-authenticate via `auth`
+    - `MULTIPLE_ACCOUNTS_IN_CACHE` → call `auth` `logout`, then login again
+    - `CACHE_DECRYPTION_FAILED` → cache/encryption mismatch; escalate to platform admin
+    - `VALIDATION_ERROR` → check parameters against TOOL_CONTRACT.md
+    - `UPSTREAM_ERROR` → Microsoft Graph API issue, retry or escalate
 
 ## When to Use This Skill
 

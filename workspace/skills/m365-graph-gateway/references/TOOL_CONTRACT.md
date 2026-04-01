@@ -215,15 +215,17 @@ Every `tools/call` response follows this contract:
 
 Errors use a `CODE: message` pattern:
 
-| Code               | Meaning                                    |
-| ------------------ | ------------------------------------------ |
-| `AUTH_REQUIRED`    | Not logged in — call `auth` first          |
-| `AUTH_EXPIRED`     | Token expired — re-authenticate via `auth` |
-| `VALIDATION_ERROR` | Missing or invalid parameters              |
-| `FORBIDDEN`        | Recipient domain not in allowlist          |
-| `NOT_FOUND`        | Resource not found                         |
-| `UPSTREAM_ERROR`   | Microsoft Graph API error                  |
-| `INTERNAL_ERROR`   | Unexpected server error                    |
+| Code                         | Meaning                                                        |
+| ---------------------------- | -------------------------------------------------------------- |
+| `AUTH_REQUIRED`              | Not logged in — call `auth` first                              |
+| `AUTH_EXPIRED`               | Token expired — re-authenticate via `auth`                     |
+| `MULTIPLE_ACCOUNTS_IN_CACHE` | Token cache contains >1 account — logout and re-login          |
+| `CACHE_DECRYPTION_FAILED`    | Token cache exists but cannot be decrypted (wrong key/corrupt) |
+| `VALIDATION_ERROR`           | Missing or invalid parameters                                  |
+| `FORBIDDEN`                  | Recipient domain not in allowlist                              |
+| `NOT_FOUND`                  | Resource not found                                             |
+| `UPSTREAM_ERROR`             | Microsoft Graph API error                                      |
+| `INTERNAL_ERROR`             | Unexpected server error                                        |
 
 ---
 
@@ -265,11 +267,11 @@ configurable domain allowlist before any email is sent or meeting is scheduled.
 
 ### 1. `auth`
 
-Authenticate with Microsoft Graph.
+Authenticate with Microsoft Graph. Includes a `status` action for diagnostics.
 
-| Parameter | Type | Required | Description                                                                                              |
-| --------- | ---- | -------- | -------------------------------------------------------------------------------------------------------- |
-| `action`  | enum | yes      | `"login"` (interactive browser), `"login_device"` (device code for headless/SSH), `"logout"`, `"whoami"` |
+| Parameter | Type | Required | Description                                                                                                                        |
+| --------- | ---- | -------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `action`  | enum | yes      | `"login"` (interactive browser), `"login_device"` (device code for headless/SSH), `"logout"`, `"whoami"`, `"status"` (diagnostics) |
 
 **Example** — check current user:
 
@@ -287,6 +289,75 @@ Authenticate with Microsoft Graph.
   "user_principal_name": "jane@contoso.com"
 }
 ```
+
+**Example** — device code login (two-phase, non-blocking):
+
+```json
+{ "name": "auth", "arguments": { "action": "login_device" } }
+```
+
+**Response** (`login_device`):
+
+```json
+{
+  "success": true,
+  "mode": "device",
+  "pending": true,
+  "verification_uri": "https://microsoft.com/devicelogin",
+  "user_code": "ABCD1234",
+  "expires_in": 900,
+  "message": "To sign in, use a web browser to open https://microsoft.com/devicelogin and enter the code ABCD1234 to authenticate."
+}
+```
+
+The `login_device` action returns **immediately** with the verification URI and
+user code. The actual token acquisition continues in the background. Present the
+`verification_uri` and `user_code` to the user so they can complete
+authentication. Then poll with `{ "action": "status" }` until `logged_in`
+becomes `true`.
+
+In stdio transport mode, the server also emits an MCP `notifications/message`
+notification at level `notice` with the same device code info, so clients that
+display MCP logging notifications will surface it in real time.
+
+**Example** — auth diagnostics:
+
+```json
+{ "name": "auth", "arguments": { "action": "status" } }
+```
+
+**Response** (`status`):
+
+```json
+{
+  "logged_in": true,
+  "user": "jane@contoso.com",
+  "cache_file_exists": true,
+  "cache_encrypted": true,
+  "cache_decryptable": true,
+  "encryption_key_configured": true,
+  "account_count": 1,
+  "graph_reachable": true,
+  "device_code_pending": false
+}
+```
+
+Returns structured diagnostics for troubleshooting auth issues. Fields:
+
+| Field                          | Type    | Description                                                          |
+| ------------------------------ | ------- | -------------------------------------------------------------------- |
+| `logged_in`                    | boolean | Whether a valid account is resolved from the cache                   |
+| `user`                         | string  | UPN of the logged-in user (null if not logged in)                    |
+| `cache_file_exists`            | boolean | Whether the token cache file exists on disk                          |
+| `cache_encrypted`              | boolean | Whether the cache file uses AES-256-GCM encryption                   |
+| `cache_decryptable`            | boolean | Whether the cache can be successfully decrypted/parsed               |
+| `encryption_key_configured`    | boolean | Whether `GRAPH_TOKEN_CACHE_ENCRYPTION_KEY` env var is set            |
+| `account_count`                | number  | Number of accounts in the cache (should be 0 or 1)                   |
+| `graph_reachable`              | boolean | Whether a test call to Microsoft Graph `/me` succeeds                |
+| `device_code_pending`          | boolean | Whether a device code login flow is currently in progress            |
+| `device_code_verification_uri` | string  | Verification URI (only present when `device_code_pending` is true)   |
+| `device_code_user_code`        | string  | User code to enter (only present when `device_code_pending` is true) |
+| `error`                        | string  | Error message if any check failed (only present on errors)           |
 
 ---
 

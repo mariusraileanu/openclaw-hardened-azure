@@ -94,7 +94,8 @@ Implement exactly what is requested. Do not expand task scope or add unrequested
 
 You have **live access to the user's Microsoft 365 account** (calendar, email,
 files) through an internal HTTP gateway running in the same network. This is
-not hypothetical — the gateway is running and pre-authenticated.
+not hypothetical — the gateway is running and supports interactive auth when
+needed.
 
 **CRITICAL**: When the user asks about calendar, meetings, schedule, emails,
 mail, files, OneDrive, or SharePoint — you MUST call the gateway using `bash`
@@ -129,7 +130,8 @@ curl -s -X POST ${GRAPH_MCP_URL}/mcp \
 
 1. Load the full skill: call `skill({ name: "m365-graph-gateway" })` for complete TOOL_CONTRACT reference
 2. Check health: `curl -s ${GRAPH_MCP_URL}/health`
-3. Check auth: `curl -s ${GRAPH_MCP_URL}/auth/status`
+3. Check auth (canonical): call MCP `auth` with `{"action":"status"}`
+4. If not logged in: call MCP `auth` with `{"action":"login_device"}`, show `verification_uri` + `user_code`, then poll `status` until `logged_in:true`
 
 ### Rules
 
