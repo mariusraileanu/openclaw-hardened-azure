@@ -380,6 +380,11 @@ resource "azurerm_container_app" "user" {
         value = var.user_slug
       }
 
+      env {
+        name  = "OPENCLAW_FORCE_NO_AUTH"
+        value = "true"
+      }
+
       # Tavily API key (only set when tavily_api_key is provided)
       dynamic "env" {
         for_each = local.tavily_enabled ? [1] : []
@@ -541,4 +546,3 @@ check "user_nfs_mount_present" {
     error_message = "User container app is missing expected NFS volume or mount after AzAPI patch."
   }
 }
-
