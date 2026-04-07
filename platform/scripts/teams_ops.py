@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from common import (
@@ -15,6 +16,172 @@ from common import (
 from env_loader import load_layered_env
 from naming import resolve_and_validate_naming
 from runner import run, run_capture
+
+
+def _routing_partition_key(aad_object_id: str) -> str:
+    normalized = aad_object_id.strip().lower()
+    return normalized[:2]
+
+
+def teams_routing_upsert(
+    repo_root: Path,
+    env_name: str,
+    aad_object_id: str,
+    user_slug: str,
+    upstream_url: str,
+    status: str,
+) -> int:
+    context = _prepare_context(repo_root, env_name)
+    if not has_active_az_session(repo_root, context):
+        raise RuntimeError("Azure CLI session is not active. Run 'az login' and retry.")
+
+    account_name = f"strelayopenclaw{env_name}"
+    partition_key = _routing_partition_key(aad_object_id)
+    row_key = aad_object_id.strip().lower()
+    payload = {
+        "PartitionKey": partition_key,
+        "RowKey": row_key,
+        "aad_object_id": row_key,
+        "user_slug": user_slug.strip(),
+        "upstream_url": upstream_url.strip(),
+        "status": status.strip(),
+        "updated_at": run_capture(["date", "-u", "+%Y-%m-%dT%H:%M:%SZ"], repo_root),
+    }
+
+    entity_args: list[str] = []
+    for key, value in payload.items():
+        entity_args.append(f"{key}={value}")
+
+    return run(
+        [
+            "az",
+            "storage",
+            "entity",
+            "insert",
+            "--auth-mode",
+            "login",
+            "--account-name",
+            account_name,
+            "--table-name",
+            "userrouting",
+            "--if-exists",
+            "replace",
+            "--entity",
+            *entity_args,
+        ],
+        repo_root,
+        env=context,
+    )
+
+
+def teams_routing_get(repo_root: Path, env_name: str, aad_object_id: str) -> int:
+    context = _prepare_context(repo_root, env_name)
+    if not has_active_az_session(repo_root, context):
+        raise RuntimeError("Azure CLI session is not active. Run 'az login' and retry.")
+
+    account_name = f"strelayopenclaw{env_name}"
+    partition_key = _routing_partition_key(aad_object_id)
+    row_key = aad_object_id.strip().lower()
+
+    rc = run(
+        [
+            "az",
+            "storage",
+            "entity",
+            "show",
+            "--auth-mode",
+            "login",
+            "--account-name",
+            account_name,
+            "--table-name",
+            "userrouting",
+            "--partition-key",
+            partition_key,
+            "--row-key",
+            row_key,
+            "--output",
+            "json",
+        ],
+        repo_root,
+        env=context,
+    )
+    return rc
+
+
+def teams_routing_disable(
+    repo_root: Path,
+    env_name: str,
+    aad_object_id: str,
+) -> int:
+    context = _prepare_context(repo_root, env_name)
+    if not has_active_az_session(repo_root, context):
+        raise RuntimeError("Azure CLI session is not active. Run 'az login' and retry.")
+
+    account_name = f"strelayopenclaw{env_name}"
+    partition_key = _routing_partition_key(aad_object_id)
+    row_key = aad_object_id.strip().lower()
+
+    show_cmd = [
+        "az",
+        "storage",
+        "entity",
+        "show",
+        "--auth-mode",
+        "login",
+        "--account-name",
+        account_name,
+        "--table-name",
+        "userrouting",
+        "--partition-key",
+        partition_key,
+        "--row-key",
+        row_key,
+        "--output",
+        "json",
+    ]
+    try:
+        existing = run_capture(show_cmd, repo_root, env=context)
+    except Exception as exc:
+        raise RuntimeError(f"Routing record not found for {row_key}: {exc}")
+
+    payload = json.loads(existing)
+    payload["status"] = "disabled"
+    payload["updated_at"] = run_capture(
+        ["date", "-u", "+%Y-%m-%dT%H:%M:%SZ"], repo_root
+    )
+
+    entity_args: list[str] = []
+    for key in [
+        "PartitionKey",
+        "RowKey",
+        "aad_object_id",
+        "user_slug",
+        "upstream_url",
+        "status",
+        "updated_at",
+    ]:
+        entity_args.append(f"{key}={payload.get(key, '')}")
+
+    return run(
+        [
+            "az",
+            "storage",
+            "entity",
+            "insert",
+            "--auth-mode",
+            "login",
+            "--account-name",
+            account_name,
+            "--table-name",
+            "userrouting",
+            "--if-exists",
+            "replace",
+            "--entity",
+            *entity_args,
+        ],
+        repo_root,
+        env=context,
+    )
 
 
 def teams_manifest(repo_root: Path, env_name: str) -> int:
@@ -79,7 +246,6 @@ def _prepare_context(repo_root: Path, env_name: str) -> dict[str, str]:
     env_map.setdefault("AZURE_OWNER_SLUG", "platform")
     env_map.setdefault("CAE_INTERNAL_ONLY", "true")
     env_map.setdefault("MSTEAMS_RELAY_ENABLED", "false")
-    env_map.setdefault("MSTEAMS_USER_SLUG_MAP", "{}")
     return env_map
 
 
@@ -173,7 +339,12 @@ def teams_relay_deploy(repo_root: Path, env_name: str) -> int:
         "-target=azurerm_subnet.func",
         "-target=azapi_resource.func_storage",
         "-target=azapi_resource.func_deploy_container",
+        "-target=azapi_resource.func_routing_table",
         "-target=azurerm_role_assignment.func_storage_blob",
+        "-target=azurerm_role_assignment.func_storage_queue_contributor",
+        "-target=azurerm_role_assignment.func_storage_table_reader",
+        "-target=azurerm_role_assignment.func_storage_table_contributor_identity",
+        "-target=azurerm_role_assignment.func_storage_table_contributor_current",
         "-target=azurerm_service_plan.relay",
         "-target=azurerm_linux_function_app.relay",
         "-target=azurerm_bot_service_azure_bot.shared",

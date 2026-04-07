@@ -195,6 +195,15 @@ def close_nfs_firewall(repo_root: Path, context: dict[str, str]) -> None:
 
 
 def shared_tf_init_args(context: dict[str, str]) -> list[str]:
+    backend_override_path = (
+        Path(__file__).resolve().parents[2] / "infra" / "shared" / "backend_override.tf"
+    )
+    if (
+        backend_override_path.exists()
+        and 'backend "local"' in backend_override_path.read_text(encoding="utf-8")
+    ):
+        return ["terraform", "-chdir=infra/shared", "init"]
+
     return [
         "terraform",
         "-chdir=infra/shared",
@@ -229,13 +238,13 @@ def shared_tf_var_args(
         "-var",
         f"msteams_tenant_id={context.get('MSTEAMS_TENANT_ID', '')}",
         "-var",
-        f"msteams_user_slug_map={context.get('MSTEAMS_USER_SLUG_MAP', '{}')}",
-        "-var",
         f"acr_name={context.get('ACR_NAME', '')}",
         "-var",
         f"sa_name={context.get('SA_NAME', '')}",
         "-var",
         f"func_relay_name={context.get('FUNC_RELAY_NAME', '')}",
+        "-var",
+        f"bot_name={context.get('BOT_NAME', '')}",
     ]
     if deployer_ips is not None:
         args.extend(["-var", f"deployer_ips={deployer_ips}"])

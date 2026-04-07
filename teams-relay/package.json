@@ -10,7 +10,9 @@
     "start": "func start"
   },
   "dependencies": {
+    "@azure/data-tables": "^13.3.1",
     "@azure/functions": "^4.0.0",
+    "@azure/identity": "^4.13.0",
     "cookie": "^1.1.1"
   },
   "devDependencies": {

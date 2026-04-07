@@ -17,6 +17,7 @@ default_tf_state_sa="tfopenclawstate${ENV_NAME}"
 default_tf_state_key="shared.tfstate"
 default_sa_name="stocopenclaw${ENV_NAME}"
 default_func_relay_name="func-relay-openclaw-${ENV_NAME}"
+default_bot_name="bot-openclaw-${ENV_NAME}"
 
 resolve() {
   local name="$1"
@@ -41,6 +42,7 @@ TF_STATE_KEY_RESOLVED="$(resolve TF_STATE_KEY "${default_tf_state_key}")"
 ACR_NAME_RESOLVED="$(resolve ACR_NAME "${AZURE_ACR_NAME_RESOLVED}")"
 SA_NAME_RESOLVED="$(resolve SA_NAME "${default_sa_name}")"
 FUNC_RELAY_NAME_RESOLVED="$(resolve FUNC_RELAY_NAME "${default_func_relay_name}")"
+BOT_NAME_RESOLVED="$(resolve BOT_NAME "${default_bot_name}")"
 
 check_pattern() {
   local value="$1"
@@ -68,6 +70,7 @@ check_pattern "${TF_STATE_KEY_RESOLVED}" '^[a-zA-Z0-9._/-]{3,200}$' "TF_STATE_KE
 check_pattern "${ACR_NAME_RESOLVED}" '^[a-z0-9]{5,50}$' "ACR_NAME" || failures=$((failures + 1))
 check_pattern "${SA_NAME_RESOLVED}" '^[a-z0-9]{3,24}$' "SA_NAME" || failures=$((failures + 1))
 check_pattern "${FUNC_RELAY_NAME_RESOLVED}" '^[a-z0-9-]{3,60}$' "FUNC_RELAY_NAME" || failures=$((failures + 1))
+check_pattern "${BOT_NAME_RESOLVED}" '^[a-z0-9-]{3,60}$' "BOT_NAME" || failures=$((failures + 1))
 
   if (( failures > 0 )); then
     echo "Naming contract validation failed with ${failures} error(s)." >&2
@@ -91,6 +94,7 @@ export TF_STATE_KEY='${TF_STATE_KEY_RESOLVED}'
 export ACR_NAME='${ACR_NAME_RESOLVED}'
 export SA_NAME='${SA_NAME_RESOLVED}'
 export FUNC_RELAY_NAME='${FUNC_RELAY_NAME_RESOLVED}'
+export BOT_NAME='${BOT_NAME_RESOLVED}'
 EOF
 }
 
@@ -115,6 +119,7 @@ case "${action}" in
       ACR_NAME) printf "%s\n" "${ACR_NAME_RESOLVED}" ;;
       SA_NAME) printf "%s\n" "${SA_NAME_RESOLVED}" ;;
       FUNC_RELAY_NAME) printf "%s\n" "${FUNC_RELAY_NAME_RESOLVED}" ;;
+      BOT_NAME) printf "%s\n" "${BOT_NAME_RESOLVED}" ;;
       *)
         echo "Unknown variable for get: ${target_var}" >&2
         exit 1

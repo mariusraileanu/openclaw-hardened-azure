@@ -60,6 +60,16 @@ if [[ -n "${GRAPH_MCP_URL:-}" ]] && [[ -f "${SKILL_FILE}" ]]; then
   fi
 fi
 
+# Always refresh TOOL_CONTRACT.md from image source so updated gateway contract
+# docs are propagated to existing NFS workspaces on every boot.
+CONTRACT_FILE="${OPENCLAW_STATE_DIR}/workspace/skills/m365-graph-gateway/references/TOOL_CONTRACT.md"
+SOURCE_CONTRACT="/app/config/workspace/skills/m365-graph-gateway/references/TOOL_CONTRACT.md"
+if [[ -f "${SOURCE_CONTRACT}" ]]; then
+  echo "Refreshing m365-graph-gateway TOOL_CONTRACT.md ..."
+  mkdir -p "$(dirname "${CONTRACT_FILE}")"
+  cp "${SOURCE_CONTRACT}" "${CONTRACT_FILE}"
+fi
+
 # Always resolve env var placeholders in AGENTS.md on every boot.
 # AGENTS.md is loaded on every request and contains ${GRAPH_MCP_URL} placeholders
 # for the M365 gateway instructions.

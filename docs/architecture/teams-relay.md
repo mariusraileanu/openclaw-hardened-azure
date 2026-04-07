@@ -14,10 +14,10 @@ Azure Bot Service (single shared bot registration)
 Teams Relay Function App (func-relay-openclaw-<env>)
     |  - VNet-integrated Azure Function (Node.js / TypeScript)
     |  - Parses Bot Framework Activity payload
-    |  - Maps activity.from.aadObjectId --> user slug via MSTEAMS_USER_SLUG_MAP
-    |  - 15-second request timeout
+    |  - Resolves activity.from.aadObjectId from Azure Table Storage
+    |  - 15-second upstream timeout + per-user short-circuit
     |
-    v  POST http://ca-openclaw-<env>-<slug>.internal.<cae-domain>:3978/api/messages
+    v  POST {upstream_url}/api/messages
 Loopback Proxy (inside user container, port 18789 ingress)
     |
     v  POST /api/messages --> 127.0.0.1:3978
@@ -31,8 +31,9 @@ OpenClaw agent processes message, sends reply back through Bot Framework
 
 - Single Azure Bot registration serves all users (one App ID, one `/api/messages` endpoint)
 - User routing is done by AAD Object ID lookup, not by URL path
-- A legacy route (`/api/messages/{user_slug}`) exists for direct testing
-- The relay is stateless -- all state lives in the user container
+- Upstream URL is read from routing registry (no hostname inference)
+- Routing records are cached in-memory (TTL) for low-latency resolution
+- Teams-facing failures are graceful (`200` with user-friendly message)
 - The relay uses VNet integration to reach internal-only container apps
 
 ## Relay Function App (`teams-relay/`)
@@ -44,6 +45,7 @@ The relay is a single Azure Function (`src/functions/messages.ts`) deployed as a
 | Runtime | Node.js (TypeScript) |
 | Trigger | HTTP POST `/api/messages` |
 | Auth level | Anonymous (Bot Framework handles JWT auth) |
+| Internal debug | GET `/internal/routing/{aadObjectId}` (`authLevel: function`) |
 | Timeout | 15 seconds |
 | Networking | VNet-integrated (reaches internal CAE ingress) |
 
@@ -51,25 +53,40 @@ The relay is a single Azure Function (`src/functions/messages.ts`) deployed as a
 
 | Variable | Description |
 |----------|-------------|
-| `CAE_DEFAULT_DOMAIN` | Default domain of the Container Apps Environment |
-| `ENVIRONMENT` | Environment label (`dev`, `prod`) |
-| `OPENCLAW_HOST_PREFIX` | Container app name prefix (default: `ca-openclaw`) |
-| `UPSTREAM_PORT` | Port on user container (default: `3978`) |
-| `UPSTREAM_HOST_STYLE` | `internal` or `external` (default: `internal`) |
-| `MSTEAMS_USER_SLUG_MAP` | JSON map of AAD Object ID to user slug |
+| `ROUTING_STORAGE_ACCOUNT_NAME` | Storage account hosting the routing table |
+| `ROUTING_TABLE_NAME` | Routing table name (default: `userrouting`) |
+| `ROUTING_CACHE_TTL_SEC` | In-memory routing cache TTL in seconds (default: `600`) |
+| `ROUTING_FAILURE_THRESHOLD` | Consecutive upstream failures before opening circuit (default: `3`) |
+| `ROUTING_CIRCUIT_OPEN_SEC` | Circuit open duration in seconds (default: `60`) |
+| `MSTEAMS_EXPECTED_TENANT_ID` | Optional tenant guard for incoming Teams payload |
 
-### User Slug Resolution
+### Routing Resolution
 
-The relay extracts `activity.from.aadObjectId` from the Bot Framework Activity payload and looks it up in `MSTEAMS_USER_SLUG_MAP`:
+The relay extracts `activity.from.aadObjectId`, validates it, and resolves a routing record from Azure Table Storage (`userrouting`).
+
+Routing entity contract:
 
 ```json
 {
-  "aad-object-id-lowercase": "alice",
-  "another-aad-object-id": "bob"
+  "aad_object_id": "string",
+  "user_slug": "string",
+  "upstream_url": "string",
+  "status": "active | provisioning | disabled",
+  "updated_at": "timestamp"
 }
 ```
 
-If no mapping is found, the relay returns 404. AAD Object IDs are normalized to lowercase for case-insensitive matching.
+Resolution behavior:
+
+- cache hit: use in-memory record
+- cache miss: query table, validate record, cache result
+- `active`: forward to `POST {upstream_url}/api/messages`
+- `provisioning`: return `200` + "Your assistant is being set up"
+- `disabled`: return `200` + "Your assistant is currently unavailable"
+- missing/invalid mapping: return `200` + "No assistant configured"
+- upstream failures: return `200` + "Assistant temporarily unavailable"
+
+All requests propagate `x-correlation-id` through relay logs and upstream calls.
 
 ### Build & Deploy
 

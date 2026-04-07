@@ -1,26 +1,3 @@
-/**
- * Teams Webhook Relay — stateless HTTP proxy (shared bot mode).
- *
- * A single Azure Bot registration serves all users. Bot Framework sends every
- * incoming message to one endpoint: POST /api/messages. This relay inspects
- * the Activity payload to determine which per-user Container App should handle
- * the request, then forwards the HTTP POST over the VNet.
- *
- * Routing:
- *   activity.from.aadObjectId  →  MSTEAMS_USER_SLUG_MAP lookup  →  user_slug
- *   → http://{OPENCLAW_HOST_PREFIX}-{env}-{user_slug}.{cae_domain}/api/messages
- *
- * A legacy route (/api/messages/{user_slug}) is retained for direct testing.
- *
- * Environment variables:
- *   CAE_DEFAULT_DOMAIN      — default domain of the Container Apps Environment
- *   ENVIRONMENT             — environment label ("dev", "prod", …)
- *   OPENCLAW_HOST_PREFIX    — per-user app name prefix (default: ca-openclaw)
- *   UPSTREAM_PORT           — port on the container app (default: 3978)
- *   UPSTREAM_HOST_STYLE     — "internal" | "external" (default: internal)
- *   MSTEAMS_USER_SLUG_MAP   — JSON: {"aad-object-id": "user-slug", …}
- */
-
 import {
   app,
   HttpRequest,
@@ -28,34 +5,29 @@ import {
   InvocationContext,
 } from "@azure/functions";
 
-// ---------------------------------------------------------------------------
-// Configuration (read once at cold start)
-// ---------------------------------------------------------------------------
+import {
+  resolveCorrelationId,
+  withCorrelationHeader,
+} from "../lib/correlation";
+import {
+  getUpstreamCircuitSnapshot,
+  isUpstreamCircuitOpen,
+  recordUpstreamFailure,
+  recordUpstreamSuccess,
+  resolveRouting,
+} from "../lib/routing/service";
+import { RoutingRecord } from "../lib/routing/types";
+import {
+  assistantDisabled,
+  assistantProvisioning,
+  assistantTemporarilyUnavailable,
+  invalidRequest,
+  noAssistantConfigured,
+} from "../lib/teams-response";
 
-const CAE_DEFAULT_DOMAIN = process.env.CAE_DEFAULT_DOMAIN ?? "";
-const ENVIRONMENT = process.env.ENVIRONMENT ?? "dev";
-const OPENCLAW_HOST_PREFIX = process.env.OPENCLAW_HOST_PREFIX ?? "ca-openclaw";
-const UPSTREAM_PORT = process.env.UPSTREAM_PORT ?? "3978";
-const UPSTREAM_HOST_STYLE = (process.env.UPSTREAM_HOST_STYLE ?? "internal").toLowerCase();
 const REQUEST_TIMEOUT_MS = 15_000;
+const EXPECTED_TENANT_ID = (process.env.MSTEAMS_EXPECTED_TENANT_ID ?? "").trim().toLowerCase();
 
-/** Map of lowercase AAD Object ID → user slug. */
-let USER_SLUG_MAP: Record<string, string> = {};
-try {
-  const raw = JSON.parse(process.env.MSTEAMS_USER_SLUG_MAP ?? "{}");
-  // Normalise keys to lowercase for case-insensitive lookup
-  for (const [key, value] of Object.entries(raw)) {
-    if (typeof value === "string") {
-      USER_SLUG_MAP[key.toLowerCase()] = value;
-    }
-  }
-} catch {
-  console.error(
-    "Failed to parse MSTEAMS_USER_SLUG_MAP — user routing will fail"
-  );
-}
-
-/** Hop-by-hop headers that must not be forwarded. */
 const SKIP_REQUEST_HEADERS = new Set([
   "host",
   "content-length",
@@ -71,60 +43,48 @@ const SKIP_RESPONSE_HEADERS = new Set([
   "keep-alive",
 ]);
 
-const SLUG_REGEX = /^[a-z][a-z0-9-]{1,18}[a-z0-9]$/;
+type ActivityEnvelope = {
+  from?: {
+    aadObjectId?: string;
+  };
+  channelData?: {
+    tenant?: {
+      id?: string;
+    };
+  };
+};
 
-function buildUpstreamHostnames(appName: string): string[] {
-  const internal = `${appName}.internal.${CAE_DEFAULT_DOMAIN}`;
-  const external = `${appName}.${CAE_DEFAULT_DOMAIN}`;
-  const preferred = UPSTREAM_HOST_STYLE === "external" ? external : internal;
-  const fallback = preferred === internal ? external : internal;
-  return preferred === fallback ? [preferred] : [preferred, fallback];
+function appendMessagesPath(baseUrl: string): string {
+  return `${baseUrl.replace(/\/$/, "")}/api/messages`;
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Resolve the target user slug from a Bot Framework Activity object. */
-function resolveUserSlug(
-  activity: Record<string, unknown>
-): string | null {
-  const from = activity.from as Record<string, unknown> | undefined;
-  const aadObjectId = (from?.aadObjectId as string | undefined) ?? "";
-  if (aadObjectId) {
-    const slug = USER_SLUG_MAP[aadObjectId.toLowerCase()];
-    if (slug) return slug;
+function summarizeResultLabel(statusCode: number): string {
+  if (statusCode >= 200 && statusCode < 300) {
+    return "upstream_ok";
   }
-  return null;
+  if (statusCode >= 500) {
+    return "upstream_server_error";
+  }
+  if (statusCode >= 400) {
+    return "upstream_client_error";
+  }
+  return "upstream_other";
 }
 
-/** Forward an HTTP POST to an internal Container App and return the response. */
-async function relayToContainer(
-  userSlug: string,
+function logRoutingResult(context: InvocationContext, payload: Record<string, unknown>): void {
+  context.log(`relay_event=${JSON.stringify(payload)}`);
+}
+
+async function relayToUpstream(
+  routing: RoutingRecord,
   bodyText: string,
   request: HttpRequest,
+  correlationId: string,
   context: InvocationContext
 ): Promise<HttpResponseInit> {
-  if (!CAE_DEFAULT_DOMAIN) {
-    context.error("CAE_DEFAULT_DOMAIN is not configured");
-    return {
-      status: 503,
-      jsonBody: { error: "Service Unavailable", message: "Relay not configured" },
-    };
-  }
+  const upstreamUrl = appendMessagesPath(routing.upstreamUrl);
+  const startedAt = Date.now();
 
-  if (!SLUG_REGEX.test(userSlug)) {
-    context.warn(`Invalid user_slug: ${userSlug}`);
-    return {
-      status: 400,
-      jsonBody: { error: "Bad Request", message: "Invalid user_slug" },
-    };
-  }
-
-  const appName = `${OPENCLAW_HOST_PREFIX}-${ENVIRONMENT}-${userSlug}`;
-  const upstreamHosts = buildUpstreamHostnames(appName);
-
-  // Forward relevant headers
   const headers: Record<string, string> = {};
   for (const [key, value] of request.headers.entries()) {
     if (!SKIP_REQUEST_HEADERS.has(key.toLowerCase())) {
@@ -135,115 +95,190 @@ async function relayToContainer(
     headers["content-type"] = "application/json";
   }
 
-  let lastErrorMessage = "Unknown upstream error";
+  const forwardHeaders = withCorrelationHeader(headers, correlationId);
 
-  for (const upstreamHost of upstreamHosts) {
-    const upstreamUrl = `http://${upstreamHost}:${UPSTREAM_PORT}/api/messages`;
-    context.log(`Relaying to ${appName} (${request.method} ${upstreamUrl})`);
+  try {
+    const upstream = await fetch(upstreamUrl, {
+      method: "POST",
+      headers: forwardHeaders,
+      body: bodyText,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
 
-    try {
-      const upstream = await fetch(upstreamUrl, {
-        method: "POST",
-        headers,
-        body: bodyText,
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
-
-      const responseBody = await upstream.text();
-
-      const responseHeaders: Record<string, string> = {};
-      for (const [key, value] of upstream.headers.entries()) {
-        if (!SKIP_RESPONSE_HEADERS.has(key.toLowerCase())) {
-          responseHeaders[key] = value;
-        }
+    const responseBody = await upstream.text();
+    const responseHeaders: Record<string, string> = {};
+    for (const [key, value] of upstream.headers.entries()) {
+      if (!SKIP_RESPONSE_HEADERS.has(key.toLowerCase())) {
+        responseHeaders[key] = value;
       }
-
-      return {
-        status: upstream.status,
-        headers: responseHeaders,
-        body: responseBody,
-      };
-    } catch (err: unknown) {
-      lastErrorMessage =
-        err instanceof Error ? err.message : "Unknown upstream error";
-      context.warn(`Relay attempt failed for ${userSlug} via ${upstreamHost}: ${lastErrorMessage}`);
     }
+
+    responseHeaders["x-correlation-id"] = correlationId;
+
+    if (upstream.status >= 500) {
+      recordUpstreamFailure(routing.aadObjectId);
+      logRoutingResult(context, {
+        aadObjectId: routing.aadObjectId,
+        userSlug: routing.userSlug,
+        upstreamUrl,
+        correlationId,
+        latencyMs: Date.now() - startedAt,
+        result: "upstream_5xx",
+        upstreamStatus: upstream.status,
+      });
+      return assistantTemporarilyUnavailable(correlationId);
+    }
+
+    recordUpstreamSuccess(routing.aadObjectId);
+    logRoutingResult(context, {
+      aadObjectId: routing.aadObjectId,
+      userSlug: routing.userSlug,
+      upstreamUrl,
+      correlationId,
+      latencyMs: Date.now() - startedAt,
+      result: summarizeResultLabel(upstream.status),
+      upstreamStatus: upstream.status,
+    });
+
+    return {
+      status: upstream.status,
+      headers: responseHeaders,
+      body: responseBody,
+    };
+  } catch (error) {
+    recordUpstreamFailure(routing.aadObjectId);
+    const message = error instanceof Error ? error.message : String(error);
+    context.error(
+      `Upstream relay failure aadObjectId=${routing.aadObjectId} correlationId=${correlationId}: ${message}`
+    );
+    logRoutingResult(context, {
+      aadObjectId: routing.aadObjectId,
+      userSlug: routing.userSlug,
+      upstreamUrl,
+      correlationId,
+      latencyMs: Date.now() - startedAt,
+      result: "upstream_failure",
+    });
+    return assistantTemporarilyUnavailable(correlationId);
   }
-
-  context.error(`Relay error for ${userSlug}: ${lastErrorMessage}`);
-  return {
-    status: 502,
-    jsonBody: { error: "Bad Gateway", message: lastErrorMessage },
-  };
 }
-
-// ---------------------------------------------------------------------------
-// Primary route: shared bot — route by Activity payload
-// ---------------------------------------------------------------------------
 
 app.http("messages", {
   methods: ["POST"],
-  authLevel: "anonymous", // Bot Framework handles its own JWT auth
+  authLevel: "anonymous",
   route: "api/messages",
   handler: async (
     request: HttpRequest,
     context: InvocationContext
   ): Promise<HttpResponseInit> => {
-    const bodyText = await request.text();
+    const requestStartedAt = Date.now();
+    const correlationId = resolveCorrelationId(request);
 
-    // Parse the Bot Framework Activity to extract the sender identity
-    let activity: Record<string, unknown>;
+    const bodyText = await request.text();
+    let activity: ActivityEnvelope;
     try {
-      activity = JSON.parse(bodyText);
+      activity = JSON.parse(bodyText) as ActivityEnvelope;
     } catch {
-      context.warn("Failed to parse request body as JSON");
-      return {
-        status: 400,
-        jsonBody: { error: "Bad Request", message: "Invalid JSON body" },
-      };
+      logRoutingResult(context, {
+        aadObjectId: "unknown",
+        userSlug: "unknown",
+        upstreamUrl: "unknown",
+        correlationId,
+        latencyMs: Date.now() - requestStartedAt,
+        result: "invalid_json",
+      });
+      return invalidRequest(correlationId);
     }
 
-    const userSlug = resolveUserSlug(activity);
-    if (!userSlug) {
-      const from = activity.from as Record<string, unknown> | undefined;
-      const aadOid = ((from?.aadObjectId as string | undefined) ?? "unknown").toLowerCase();
-      context.warn(`No user mapping for aadObjectId: ${aadOid}`);
-      return {
-        status: 404,
-        jsonBody: {
-          error: "Not Found",
-          message: "No bot instance configured for this user",
-        },
-      };
+    const aadObjectId = activity.from?.aadObjectId ?? "";
+    if (!aadObjectId) {
+      logRoutingResult(context, {
+        aadObjectId: "missing",
+        userSlug: "unknown",
+        upstreamUrl: "unknown",
+        correlationId,
+        latencyMs: Date.now() - requestStartedAt,
+        result: "missing_aad_object_id",
+      });
+      return noAssistantConfigured(correlationId);
     }
 
-    return relayToContainer(userSlug, bodyText, request, context);
-  },
-});
-
-// ---------------------------------------------------------------------------
-// Legacy route: direct user_slug in path (for testing)
-// ---------------------------------------------------------------------------
-
-app.http("messages-legacy", {
-  methods: ["POST"],
-  authLevel: "anonymous",
-  route: "api/messages/{user_slug}",
-  handler: async (
-    request: HttpRequest,
-    context: InvocationContext
-  ): Promise<HttpResponseInit> => {
-    const userSlug = request.params.user_slug;
-
-    if (!userSlug || !SLUG_REGEX.test(userSlug)) {
-      return {
-        status: 400,
-        jsonBody: { error: "Bad Request", message: "Invalid user_slug" },
-      };
+    if (EXPECTED_TENANT_ID) {
+      const tenantId = (activity.channelData?.tenant?.id ?? "").trim().toLowerCase();
+      if (tenantId && tenantId !== EXPECTED_TENANT_ID) {
+        logRoutingResult(context, {
+          aadObjectId,
+          userSlug: "unknown",
+          upstreamUrl: "unknown",
+          correlationId,
+          latencyMs: Date.now() - requestStartedAt,
+          result: "tenant_mismatch",
+        });
+        return noAssistantConfigured(correlationId);
+      }
     }
 
-    context.log(`[legacy] Direct route for ${userSlug}`);
-    const bodyText = await request.text();
-    return relayToContainer(userSlug, bodyText, request, context);
+    const resolution = await resolveRouting(aadObjectId, context);
+    if (!resolution.record || !resolution.routingValid) {
+      logRoutingResult(context, {
+        aadObjectId: resolution.aadObjectId,
+        userSlug: "unknown",
+        upstreamUrl: "unknown",
+        correlationId,
+        latencyMs: Date.now() - requestStartedAt,
+        result: resolution.lookupResult,
+      });
+
+      if (resolution.lookupResult === "store_error") {
+        return assistantTemporarilyUnavailable(correlationId);
+      }
+      return noAssistantConfigured(correlationId);
+    }
+
+    if (isUpstreamCircuitOpen(resolution.record.aadObjectId)) {
+      const snapshot = getUpstreamCircuitSnapshot(resolution.record.aadObjectId);
+      logRoutingResult(context, {
+        aadObjectId: resolution.record.aadObjectId,
+        userSlug: resolution.record.userSlug,
+        upstreamUrl: resolution.record.upstreamUrl,
+        correlationId,
+        latencyMs: Date.now() - requestStartedAt,
+        result: "circuit_open",
+        circuitUntil: snapshot.openUntil,
+      });
+      return assistantTemporarilyUnavailable(correlationId);
+    }
+
+    if (resolution.record.status === "provisioning") {
+      logRoutingResult(context, {
+        aadObjectId: resolution.record.aadObjectId,
+        userSlug: resolution.record.userSlug,
+        upstreamUrl: resolution.record.upstreamUrl,
+        correlationId,
+        latencyMs: Date.now() - requestStartedAt,
+        result: "status_provisioning",
+      });
+      return assistantProvisioning(correlationId);
+    }
+
+    if (resolution.record.status === "disabled") {
+      logRoutingResult(context, {
+        aadObjectId: resolution.record.aadObjectId,
+        userSlug: resolution.record.userSlug,
+        upstreamUrl: resolution.record.upstreamUrl,
+        correlationId,
+        latencyMs: Date.now() - requestStartedAt,
+        result: "status_disabled",
+      });
+      return assistantDisabled(correlationId);
+    }
+
+    return relayToUpstream(
+      resolution.record,
+      bodyText,
+      request,
+      correlationId,
+      context
+    );
   },
 });

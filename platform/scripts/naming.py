@@ -18,6 +18,7 @@ NAMING_EXPORT_KEYS = [
     "ACR_NAME",
     "SA_NAME",
     "FUNC_RELAY_NAME",
+    "BOT_NAME",
 ]
 
 

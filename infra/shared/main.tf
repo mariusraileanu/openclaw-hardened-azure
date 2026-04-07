@@ -1209,6 +1209,50 @@ resource "azurerm_role_assignment" "func_storage_blob" {
   principal_id         = azurerm_user_assigned_identity.shared.principal_id
 }
 
+# RBAC: managed identity needs queue access for Functions host/runtime internals
+resource "azurerm_role_assignment" "func_storage_queue_contributor" {
+  count                = var.msteams_relay_enabled ? 1 : 0
+  scope                = azapi_resource.func_storage[0].id
+  role_definition_name = "Storage Queue Data Contributor"
+  principal_id         = azurerm_user_assigned_identity.shared.principal_id
+}
+
+# Teams routing registry table (aad_object_id -> upstream_url)
+resource "azapi_resource" "func_routing_table" {
+  count     = var.msteams_relay_enabled ? 1 : 0
+  type      = "Microsoft.Storage/storageAccounts/tableServices/tables@2023-05-01"
+  name      = "userrouting"
+  parent_id = "${azapi_resource.func_storage[0].id}/tableServices/default"
+
+  body = {
+    properties = {}
+  }
+}
+
+# RBAC: relay identity needs Azure Table reads for routing lookups
+resource "azurerm_role_assignment" "func_storage_table_reader" {
+  count                = var.msteams_relay_enabled ? 1 : 0
+  scope                = azapi_resource.func_storage[0].id
+  role_definition_name = "Storage Table Data Reader"
+  principal_id         = azurerm_user_assigned_identity.shared.principal_id
+}
+
+# RBAC: managed identity needs table writes for host/runtime internals
+resource "azurerm_role_assignment" "func_storage_table_contributor_identity" {
+  count                = var.msteams_relay_enabled ? 1 : 0
+  scope                = azapi_resource.func_storage[0].id
+  role_definition_name = "Storage Table Data Contributor"
+  principal_id         = azurerm_user_assigned_identity.shared.principal_id
+}
+
+# RBAC: deploying principal can manage routing entries (Table data-plane)
+resource "azurerm_role_assignment" "func_storage_table_contributor_current" {
+  count                = var.msteams_relay_enabled ? 1 : 0
+  scope                = azapi_resource.func_storage[0].id
+  role_definition_name = "Storage Table Data Contributor"
+  principal_id         = data.azurerm_client_config.current.object_id
+}
+
 # ---------------------------------------------------------------------------
 # Service Plan (Elastic Premium EP1 — required for VNet integration)
 # ---------------------------------------------------------------------------
@@ -1251,12 +1295,17 @@ resource "azurerm_linux_function_app" "relay" {
   app_settings = {
     CAE_DEFAULT_DOMAIN               = azurerm_container_app_environment.shared.default_domain
     ENVIRONMENT                      = var.environment
-    OPENCLAW_HOST_PREFIX             = "ca-openclaw"
-    UPSTREAM_PORT                    = "80"
-    UPSTREAM_HOST_STYLE              = "external"
-    MSTEAMS_USER_SLUG_MAP            = var.msteams_user_slug_map
+    ROUTING_PROVIDER                 = "azure_table"
+    ROUTING_STORAGE_ACCOUNT_NAME     = azapi_resource.func_storage[0].name
+    ROUTING_TABLE_NAME               = azapi_resource.func_routing_table[0].name
+    ROUTING_CACHE_TTL_SEC            = "600"
+    ROUTING_FAILURE_THRESHOLD        = "3"
+    ROUTING_CIRCUIT_OPEN_SEC         = "60"
+    MSTEAMS_EXPECTED_TENANT_ID       = var.msteams_tenant_id
     WEBSITE_RUN_FROM_PACKAGE         = "1"
     AzureWebJobsStorage__accountName = azapi_resource.func_storage[0].name
+    AzureWebJobsStorage__credential  = "managedidentity"
+    AzureWebJobsStorage__clientId    = azurerm_user_assigned_identity.shared.client_id
   }
 
   site_config {
@@ -1289,7 +1338,7 @@ resource "azurerm_linux_function_app" "relay" {
 # ---------------------------------------------------------------------------
 # One bot serves all users. The relay Function App routes incoming Bot
 # Framework POST requests to the correct per-user Container App based on
-# the sender's AAD Object ID (via MSTEAMS_USER_SLUG_MAP).
+# the sender's AAD Object ID (resolved from the Azure Table routing registry).
 
 locals {
   msteams_bot_enabled = var.msteams_relay_enabled && var.msteams_app_id != ""

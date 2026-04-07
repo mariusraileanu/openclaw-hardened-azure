@@ -112,6 +112,19 @@ curl -s "http://${GW_FQDN}/auth/status"
 
 **First-time Microsoft auth:** The gateway uses the device-code flow. On first start, check the gateway logs for a URL and code. Open the URL in a browser, enter the code, and sign in with your Microsoft account. The token is cached on the NFS volume and survives restarts.
 
+**Post-auth identity guard check (recommended):**
+
+```bash
+# Verify gateway auth identity for one or more users
+./platform/cli/ocp graph auth-check --env prod --user alice --user bob
+```
+
+Expected outcomes:
+
+- `PASS` -> authenticated and resolved Entra object ID matches Key Vault secret `<slug>-entra-object-id`.
+- `WARN_LOGIN_REQUIRED` -> gateway is healthy but user has not completed device-code auth yet.
+- `FAIL_MISMATCH` -> cached token belongs to a different user; clear token cache in the graph-gateway deployment and re-auth.
+
 The user-app deployment auto-discovers the gateway FQDN at deploy time and injects it as `GRAPH_MCP_URL`.
 
 ## Step 4: Deploy the User Container App

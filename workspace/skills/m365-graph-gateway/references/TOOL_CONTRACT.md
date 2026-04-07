@@ -1,4 +1,4 @@
-# Tool Contract — m365-graph-mcp-gateway
+# Tool Contract - m365-graph-mcp-gateway
 
 This document is the canonical reference for agents consuming the MCP gateway.
 Pass it as system-prompt context or reference documentation so the LLM knows
@@ -11,7 +11,7 @@ every tool name, parameter, response shape, and best-practice calling pattern.
 | Endpoint       | Method | Description               |
 | -------------- | ------ | ------------------------- |
 | `/mcp`         | POST   | MCP JSON-RPC (HTTP mode)  |
-| `stdin/stdout` | —      | MCP JSON-RPC (stdio mode) |
+| `stdin/stdout` | -      | MCP JSON-RPC (stdio mode) |
 
 All calls use JSON-RPC 2.0:
 
@@ -39,12 +39,57 @@ The `/mcp` endpoint supports optional API key authentication via the
 
 | Configuration        | Behavior                                                    |
 | -------------------- | ----------------------------------------------------------- |
-| Key not set or empty | Open access — no `Authorization` header required            |
+| Key not set or empty | Open access - no `Authorization` header required            |
 | Key set              | Requires `Authorization: Bearer <key>` on every `/mcp` call |
 
 - `/health` and `/auth/status` are **never** gated by the API key.
 - Uses **constant-time comparison** (`crypto.timingSafeEqual`) to prevent timing attacks.
 - Returns HTTP **401** with `{"error": "Unauthorized: invalid or missing API key"}` on failure.
+
+### Identity Binding
+
+The gateway enforces **strict identity pinning** to ensure the cached Microsoft
+identity matches the expected user for a given deployment. This prevents
+cross-user token reuse when multiple containers share NFS-backed storage.
+
+**`EXPECTED_AAD_OBJECT_ID` is required** - the gateway refuses to operate without
+it. Login, token acquisition, and identity verification all fail with
+`CONFIG_ERROR` if this value is not set.
+
+**OID-based account matching**:
+
+- On every `resolveAccount()` call, the gateway scans all cached MSAL accounts
+  and selects the one whose `idTokenClaims.oid` or `localAccountId` matches
+  `EXPECTED_AAD_OBJECT_ID`. It never picks the "first" account.
+- If no account matches: returns null (auth required)
+- If exactly one matches: uses that account
+- If multiple match (corrupted cache): quarantines the cache and throws
+  `TOKEN_CACHE_CORRUPTED`
+- If a single account exists but its OID doesn't match: quarantines the cache
+  and throws `AUTH_MISMATCH`
+
+**Startup verification** (`verifyIdentityBinding()`):
+
+- Runs at container startup before accepting requests
+- Uses the same OID-based matching logic
+- Writes a `token-cache.meta.json` sidecar file on success (records OID,
+  timestamp, and user principal name)
+- On mismatch or corruption: quarantines the cache by renaming it
+
+**The `auth` tool's `status` action reports**:
+
+- `expected_object_id` - from `EXPECTED_AAD_OBJECT_ID` (null if not configured)
+- `actual_object_id` - from cached account (null if no account)
+- `identity_match` - boolean comparison (null if OID not configured)
+- `identity_binding_status` - one of:
+  - `'valid'` - OID is configured and matches the cached account
+  - `'invalid'` - OID is configured but does not match (or cache corrupted)
+  - `'missing'` - `EXPECTED_AAD_OBJECT_ID` is not set (gateway non-functional)
+
+**`USER_SLUG` is required** - controls per-user storage path isolation. Without
+it, the gateway refuses to resolve any storage path (token cache, audit log).
+Format: lowercase alphanumeric + hyphens, 2-31 chars, starting with a letter
+(e.g. `jdoe`, `dev-local`). Set it in `.env` for local development.
 
 ```bash
 # With API key configured
@@ -62,35 +107,6 @@ curl -s http://localhost:3000/mcp \
 Clients **must** send `initialize` as the first request. The server validates the
 client's requested `protocolVersion` and returns its own capabilities.
 
-**Request:**
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "method": "initialize",
-  "params": {
-    "protocolVersion": "2025-03-26",
-    "capabilities": {},
-    "clientInfo": { "name": "my-agent", "version": "1.0" }
-  }
-}
-```
-
-**Response:**
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "result": {
-    "protocolVersion": "2025-03-26",
-    "capabilities": { "tools": { "listChanged": false } },
-    "serverInfo": { "name": "m365-graph-mcp-gateway", "version": "1.0.0" }
-  }
-}
-```
-
 If the client sends an unsupported `protocolVersion`, the server returns a
 `-32602` error with the list of supported versions.
 
@@ -100,14 +116,6 @@ After receiving the `initialize` response, the client should send a
 ### `ping`
 
 Health check at the protocol level. Returns an empty result.
-
-```json
-// Request
-{ "jsonrpc": "2.0", "id": 42, "method": "ping" }
-
-// Response
-{ "jsonrpc": "2.0", "id": 42, "result": {} }
-```
 
 ### Notifications
 
@@ -172,26 +180,7 @@ appropriate error code:
 
 - JSON-RPC errors always return HTTP 200. Only HTTP-level issues use non-200 codes (401 auth, 413 body too large, 429 rate limit, 404 unknown route).
 - The `id` in error responses mirrors the request's `id` (or `null` if the `id` was invalid or absent).
-- Array bodies (batch requests) are rejected with `-32600` — batch mode is not supported.
-
----
-
-## Request Logging
-
-Every request to `/mcp` is logged as structured JSON to stdout. Each log entry
-includes:
-
-| Field         | Description                                          |
-| ------------- | ---------------------------------------------------- |
-| `method`      | JSON-RPC method (e.g. `tools/call`, `ping`)          |
-| `id`          | Request ID (string, number, or null)                 |
-| `tool`        | Tool name (only for `tools/call` requests)           |
-| `duration_ms` | Wall-clock time from request parse to response write |
-| `status`      | `"ok"` or `"error"`                                  |
-| `error_code`  | JSON-RPC error code (only on errors)                 |
-
-Notifications (messages with no `id`) are **not** logged — only requests that
-produce a response are recorded.
+- Array bodies (batch requests) are rejected with `-32600` - batch mode is not supported.
 
 ---
 
@@ -207,25 +196,37 @@ Every `tools/call` response follows this contract:
 }
 ```
 
-- `content[0].text` — human-readable summary with titles, links, and snippets (same as `structuredContent.summary`)
-- `structuredContent` — full structured data for programmatic use
-- `isError` — only present (and `true`) on failures
+- `content[0].text` - human-readable summary with titles, links, and snippets (same as `structuredContent.summary`)
+- `structuredContent` - full structured data for programmatic use
+- `isError` - only present (and `true`) on failures
 
 ### Error Responses
 
 Errors use a `CODE: message` pattern:
 
-| Code                         | Meaning                                                        |
-| ---------------------------- | -------------------------------------------------------------- |
-| `AUTH_REQUIRED`              | Not logged in — call `auth` first                              |
-| `AUTH_EXPIRED`               | Token expired — re-authenticate via `auth`                     |
-| `MULTIPLE_ACCOUNTS_IN_CACHE` | Token cache contains >1 account — logout and re-login          |
-| `CACHE_DECRYPTION_FAILED`    | Token cache exists but cannot be decrypted (wrong key/corrupt) |
-| `VALIDATION_ERROR`           | Missing or invalid parameters                                  |
-| `FORBIDDEN`                  | Recipient domain not in allowlist                              |
-| `NOT_FOUND`                  | Resource not found                                             |
-| `UPSTREAM_ERROR`             | Microsoft Graph API error                                      |
-| `INTERNAL_ERROR`             | Unexpected server error                                        |
+| Code                         | Meaning                                                                    |
+| ---------------------------- | -------------------------------------------------------------------------- |
+| `AUTH_REQUIRED`              | Not logged in - call `auth` first                                          |
+| `AUTH_EXPIRED`               | Token expired - re-authenticate via `auth`                                 |
+| `AUTH_MISMATCH`              | Cached identity OID does not match `EXPECTED_AAD_OBJECT_ID`                |
+| `CONFIG_ERROR`               | Required config missing (e.g. `EXPECTED_AAD_OBJECT_ID` not set)            |
+| `TOKEN_CACHE_CORRUPTED`      | Token cache in invalid state (e.g. multiple OID matches)                   |
+| `MULTIPLE_ACCOUNTS_IN_CACHE` | Token cache contains >1 account - logout and re-login                      |
+| `CACHE_DECRYPTION_FAILED`    | Token cache exists but cannot be decrypted (wrong key/corrupt)             |
+| `TOKEN_IDENTITY_MISMATCH`    | Cached identity does not match expected Entra object ID                    |
+| `FILE_TOO_LARGE`             | File exceeds 10 MB inline limit - use `download_url` instead               |
+| `VALIDATION_ERROR`           | Missing or invalid parameters                                              |
+| `FORBIDDEN`                  | Recipient domain not in allowlist                                          |
+| `NOT_FOUND`                  | Resource not found                                                         |
+| `UPSTREAM_ERROR`             | Microsoft Graph API error                                                  |
+| `INTERNAL_ERROR`             | Unexpected server error                                                    |
+| `MEETING_NOT_RESOLVABLE`     | joinWebUrl filter returned 0 meetings - expired or no calendar association |
+| `MISSING_JOIN_WEB_URL`       | Chat has no onlineMeetingInfo.joinWebUrl                                   |
+| `TRANSCRIPT_NOT_AVAILABLE`   | Transcription not enabled, not ready, meeting expired, or no permission    |
+| `UNSUPPORTED_FILE_TYPE`      | File extension not supported for parsed mode extraction                    |
+| `PARSE_ERROR`                | File parsing failed (corrupt or unreadable file)                           |
+| `INVALID_KQL_FIELD`          | KQL filter uses an unsupported field name                                  |
+| `INVALID_KQL_FILTER`         | KQL filter_expression has invalid syntax (unbalanced quotes/parens)        |
 
 ---
 
@@ -238,6 +239,7 @@ show the user what will happen before committing.
 - `compose_email` with `mode: "send"`, `"reply"`, or `"reply_all"`
 - `schedule_meeting`
 - `respond_to_meeting` (accept, decline, tentativelyAccept, cancel)
+- `send_chat_message`
 
 **Pattern**: first call without `confirm` to get a preview, then re-call with
 `confirm: true` after user approval.
@@ -263,842 +265,295 @@ configurable domain allowlist before any email is sent or meeting is scheduled.
 
 ---
 
-## Tools Reference (11 tools)
+## Tools Reference (22 tools)
 
 ### 1. `auth`
 
 Authenticate with Microsoft Graph. Includes a `status` action for diagnostics.
 
-| Parameter | Type | Required | Description                                                                                                                        |
-| --------- | ---- | -------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `action`  | enum | yes      | `"login"` (interactive browser), `"login_device"` (device code for headless/SSH), `"logout"`, `"whoami"`, `"status"` (diagnostics) |
-
-**Example** — check current user:
-
-```json
-{ "name": "auth", "arguments": { "action": "whoami" } }
-```
-
-**Response** (`whoami`):
-
-```json
-{
-  "id": "user-uuid",
-  "display_name": "Jane Doe",
-  "mail": "jane@contoso.com",
-  "user_principal_name": "jane@contoso.com"
-}
-```
-
-**Example** — device code login (two-phase, non-blocking):
-
-```json
-{ "name": "auth", "arguments": { "action": "login_device" } }
-```
-
-**Response** (`login_device`):
-
-```json
-{
-  "success": true,
-  "mode": "device",
-  "pending": true,
-  "verification_uri": "https://microsoft.com/devicelogin",
-  "user_code": "ABCD1234",
-  "expires_in": 900,
-  "message": "To sign in, use a web browser to open https://microsoft.com/devicelogin and enter the code ABCD1234 to authenticate."
-}
-```
-
-The `login_device` action returns **immediately** with the verification URI and
-user code. The actual token acquisition continues in the background. Present the
-`verification_uri` and `user_code` to the user so they can complete
-authentication. Then poll with `{ "action": "status" }` until `logged_in`
-becomes `true`.
-
-In stdio transport mode, the server also emits an MCP `notifications/message`
-notification at level `notice` with the same device code info, so clients that
-display MCP logging notifications will surface it in real time.
-
-**Example** — auth diagnostics:
-
-```json
-{ "name": "auth", "arguments": { "action": "status" } }
-```
-
-**Response** (`status`):
-
-```json
-{
-  "logged_in": true,
-  "user": "jane@contoso.com",
-  "cache_file_exists": true,
-  "cache_encrypted": true,
-  "cache_decryptable": true,
-  "encryption_key_configured": true,
-  "account_count": 1,
-  "graph_reachable": true,
-  "device_code_pending": false
-}
-```
-
-Returns structured diagnostics for troubleshooting auth issues. Fields:
-
-| Field                          | Type    | Description                                                          |
-| ------------------------------ | ------- | -------------------------------------------------------------------- |
-| `logged_in`                    | boolean | Whether a valid account is resolved from the cache                   |
-| `user`                         | string  | UPN of the logged-in user (null if not logged in)                    |
-| `cache_file_exists`            | boolean | Whether the token cache file exists on disk                          |
-| `cache_encrypted`              | boolean | Whether the cache file uses AES-256-GCM encryption                   |
-| `cache_decryptable`            | boolean | Whether the cache can be successfully decrypted/parsed               |
-| `encryption_key_configured`    | boolean | Whether `GRAPH_TOKEN_CACHE_ENCRYPTION_KEY` env var is set            |
-| `account_count`                | number  | Number of accounts in the cache (should be 0 or 1)                   |
-| `graph_reachable`              | boolean | Whether a test call to Microsoft Graph `/me` succeeds                |
-| `device_code_pending`          | boolean | Whether a device code login flow is currently in progress            |
-| `device_code_verification_uri` | string  | Verification URI (only present when `device_code_pending` is true)   |
-| `device_code_user_code`        | string  | User code to enter (only present when `device_code_pending` is true) |
-| `error`                        | string  | Error message if any check failed (only present on errors)           |
-
----
+| Parameter | Type | Required | Description |
+| --------- | ---- | -------- | ----------- |
+| `action`  | enum | yes      | `"login"`, `"login_device"`, `"logout"`, `"whoami"`, `"status"` |
 
 ### 2. `find`
 
-Search across Microsoft 365 — mail, files, and calendar events.
+Search across Microsoft 365 - mail, files, and calendar events.
 
-| Parameter      | Type     | Required | Description                                                                                                       |
-| -------------- | -------- | -------- | ----------------------------------------------------------------------------------------------------------------- |
-| `query`        | string   | yes      | Search query (min 1 char). Natural language: `"emails from John about Q4"`, `"budget spreadsheets"`, `"meetings"` |
-| `kql`          | string   | no       | Raw KQL query passed directly to Graph Search API. When provided, overrides `query` for the search request.       |
-| `entity_types` | string[] | no       | Filter to specific types: `"mail"`, `"files"`, `"events"`. Default: all three.                                    |
-| `start_date`   | string   | no       | ISO 8601 datetime for date-range event queries. Example: `"2026-02-23T00:00:00"`                                  |
-| `end_date`     | string   | no       | ISO 8601 datetime. Required alongside `start_date`. Example: `"2026-02-24T00:00:00"`                              |
-| `top`          | integer  | no       | Max results (1-50, default 10)                                                                                    |
-| `max_chars`    | integer  | no       | Max output chars (1-50000, default from config)                                                                   |
-
-#### Event search behavior
-
-There are two modes for event search, selected automatically:
-
-**Date-range mode** (when `start_date` AND `end_date` are provided):
-
-- Uses the CalendarView API — returns all events in the range including expanded recurring instances
-- Results include: organizer (name + email), attendees (name, email, response status), location, Teams join URL, body preview
-- Provider: `"calendar-view"`
-- **Important**: resolve relative dates to concrete ISO 8601 before calling. Examples:
-  - "Monday" (today is Sat Feb 21) → `start_date: "2026-02-23T00:00:00"`, `end_date: "2026-02-24T00:00:00"`
-  - "next week" → `start_date: "2026-02-23T00:00:00"`, `end_date: "2026-03-02T00:00:00"`
-  - "tomorrow" → `start_date: "2026-02-22T00:00:00"`, `end_date: "2026-02-23T00:00:00"`
-
-**Text-search mode** (no dates provided):
-
-- Uses Graph Search API — full-text search across all events
-- Good for queries like "find the Q4 planning meeting" or "meetings with John"
-- Results may span all time periods; no date filtering
-- Provider: `"graph-search"`
-
-#### File search behavior
-
-Uses Graph Search API.
-
-#### Response notes
-
-- `content[0].text` contains the full human-readable summary with titles, document/event links, and snippets — always present this to the user.
-- `structuredContent.results[]` has the full structured data including `source_url` (files), `web_link` (events), attendees, organizer, etc.
-- File results include a `source_url` (SharePoint/OneDrive link) — always show this link to the user.
-- Event results include a `web_link` (Outlook link) and `teams_join_url` — show these when relevant.
-
-**Example** — meetings on a specific day:
-
-```json
-{
-  "name": "find",
-  "arguments": {
-    "query": "meetings",
-    "entity_types": ["events"],
-    "start_date": "2026-02-23T00:00:00",
-    "end_date": "2026-02-24T00:00:00",
-    "top": 10
-  }
-}
-```
-
-**Example** — search emails:
-
-```json
-{
-  "name": "find",
-  "arguments": {
-    "query": "budget report from finance",
-    "entity_types": ["mail"],
-    "top": 5
-  }
-}
-```
-
-**Example** — search across everything:
-
-```json
-{
-  "name": "find",
-  "arguments": {
-    "query": "quarterly review"
-  }
-}
-```
-
-**Response** (date-range events):
-
-```json
-{
-  "providers": ["calendar-view"],
-  "query": "meetings",
-  "entity_types": ["events"],
-  "start_date": "2026-02-23T00:00:00",
-  "end_date": "2026-02-24T00:00:00",
-  "top": 10,
-  "elapsed_ms": 320,
-  "timezone": "America/New_York",
-  "result_count": 3,
-  "summary": "[1] Sprint Planning\n   Link: https://outlook.office365.com/owa/?itemid=...\n   Agenda: review sprint backlog...\n[2] 1:1 with Manager\n   Link: https://outlook.office365.com/owa/?itemid=...\n[3] Team Standup",
-  "truncated": false,
-  "results": [
-    {
-      "type": "event",
-      "id": "AAMk...",
-      "subject": "Sprint Planning",
-      "start": "2026-02-23T09:00:00.0000000",
-      "end": "2026-02-23T10:00:00.0000000",
-      "organizer": { "name": "Jane Doe", "address": "jane@contoso.com" },
-      "attendee_count": 5,
-      "attendees": [
-        { "name": "Bob Smith", "email": "bob@contoso.com", "type": "required", "response": "accepted" },
-        { "name": "Alice Jones", "email": "alice@contoso.com", "type": "required", "response": "tentativelyAccepted" }
-      ],
-      "location": "Room 4B",
-      "is_online_meeting": true,
-      "teams_join_url": "https://teams.microsoft.com/l/meetup-join/...",
-      "web_link": "https://outlook.office365.com/owa/?itemid=...",
-      "body_preview": "Agenda: review sprint backlog..."
-    }
-  ]
-}
-```
-
-**Response** (mail):
-
-```json
-{
-  "results": [
-    {
-      "type": "mail",
-      "id": "AAMk...",
-      "subject": "Q4 Budget Report",
-      "from": { "emailAddress": { "name": "Finance Team", "address": "finance@contoso.com" } },
-      "received_at": "2026-02-20T14:30:00Z",
-      "snippet": "Please find the attached Q4 budget report..."
-    }
-  ]
-}
-```
-
-**Response** (files):
-
-```json
-{
-  "results": [
-    {
-      "type": "file",
-      "id": "01XYZ...",
-      "drive_id": "b!abc...",
-      "name": "Budget_Q4_2026.xlsx",
-      "path": "/drives/b!abc.../root:/Finance/Reports",
-      "modified_at": "2026-02-20T14:30:00Z",
-      "size": 45321,
-      "web_url": "https://contoso.sharepoint.com/...",
-      "snippet": "Quarterly budget allocation and variance analysis..."
-    }
-  ]
-}
-```
-
----
+| Parameter      | Type     | Required | Description |
+| -------------- | -------- | -------- | ----------- |
+| `query`        | string   | yes      | Search query |
+| `kql`          | string   | no       | Raw KQL query override |
+| `entity_types` | string[] | no       | `"mail"`, `"files"`, `"events"` |
+| `start_date`   | string   | no       | ISO 8601 datetime |
+| `end_date`     | string   | no       | ISO 8601 datetime |
+| `top`          | integer  | no       | Max results (1-50, default 10) |
+| `max_chars`    | integer  | no       | Max output chars (1-50000) |
 
 ### 3. `get_email`
 
-Fetch a specific email by ID. Use after `find` to retrieve full details.
+Fetch a specific email by ID.
 
-| Parameter      | Type    | Required | Description                                                          |
-| -------------- | ------- | -------- | -------------------------------------------------------------------- |
-| `message_id`   | string  | yes      | Email ID from `find` results                                         |
-| `include_full` | boolean | no       | `true` for expanded fields (body, all recipients). Default: minimal. |
-
-**Example**:
-
-```json
-{ "name": "get_email", "arguments": { "message_id": "AAMk...", "include_full": true } }
-```
-
-**Response** (minimal):
-
-```json
-{
-  "id": "AAMk...",
-  "subject": "Q4 Budget Report",
-  "from": { "address": "finance@contoso.com", "name": "Finance Team" },
-  "sent_at": "2026-02-20T14:25:00Z",
-  "received_at": "2026-02-20T14:30:00Z",
-  "is_read": true,
-  "body_preview": "Please find the attached Q4 budget report..."
-}
-```
-
-**Response** (full — `include_full: true`):
-
-```json
-{
-  "id": "AAMk...",
-  "subject": "Q4 Budget Report",
-  "from": { "address": "finance@contoso.com", "name": "Finance Team" },
-  "sent_at": "2026-02-20T14:25:00Z",
-  "received_at": "2026-02-20T14:30:00Z",
-  "is_read": true,
-  "body_preview": "Please find the attached Q4 budget report...",
-  "to": [{ "emailAddress": { "name": "Jane Doe", "address": "jane@contoso.com" } }],
-  "cc": [],
-  "conversation_id": "AAQk...",
-  "body_text": "Please find the attached Q4 budget report. Key highlights: ...",
-  "body_truncated": false,
-  "web_link": "https://outlook.office365.com/owa/?itemid=..."
-}
-```
-
----
+| Parameter      | Type    | Required | Description |
+| -------------- | ------- | -------- | ----------- |
+| `message_id`   | string  | yes      | Email ID from `find` |
+| `include_full` | boolean | no       | Expanded fields |
 
 ### 4. `get_event`
 
-Fetch a specific calendar event by ID. Use after `find` to retrieve full details.
+Fetch a specific calendar event by ID.
 
-| Parameter      | Type    | Required | Description                                                                            |
-| -------------- | ------- | -------- | -------------------------------------------------------------------------------------- |
-| `event_id`     | string  | yes      | Event ID from `find` results                                                           |
-| `include_full` | boolean | no       | `true` for full attendee list, body preview, online meeting details. Default: minimal. |
-
-**Example**:
-
-```json
-{ "name": "get_event", "arguments": { "event_id": "AAMk...", "include_full": true } }
-```
-
-**Response** (full):
-
-```json
-{
-  "id": "AAMk...",
-  "subject": "Sprint Planning",
-  "start": "2026-02-23T09:00:00.0000000",
-  "end": "2026-02-23T10:00:00.0000000",
-  "organizer": { "name": "Jane Doe", "address": "jane@contoso.com" },
-  "attendee_count": 5,
-  "attendees": [{ "name": "Bob Smith", "email": "bob@contoso.com", "type": "required", "response": "accepted" }],
-  "location": "Room 4B",
-  "is_online_meeting": true,
-  "teams_join_url": "https://teams.microsoft.com/l/meetup-join/...",
-  "web_link": "https://outlook.office365.com/owa/?itemid=...",
-  "body_preview": "Agenda: review sprint backlog..."
-}
-```
-
----
+| Parameter      | Type    | Required | Description |
+| -------------- | ------- | -------- | ----------- |
+| `event_id`     | string  | yes      | Event ID from `find` |
+| `include_full` | boolean | no       | Expanded fields |
 
 ### 5. `get_email_thread`
 
-Fetch all messages in an email conversation thread. Provide either a
-`conversation_id` (from `get_email` with `include_full=true`) or a `message_id`
-(the tool resolves the `conversationId` automatically). Returns messages sorted
-oldest-first.
+Fetch all messages in an email conversation thread.
 
-| Parameter         | Type    | Required         | Description                                                             |
-| ----------------- | ------- | ---------------- | ----------------------------------------------------------------------- |
-| `conversation_id` | string  | one of the two\* | Conversation ID (from `get_email` response when `include_full=true`)    |
-| `message_id`      | string  | one of the two\* | Message ID — the tool fetches the message to resolve its conversationId |
-| `top`             | integer | no               | Max messages to return (1-50, default 10)                               |
-| `include_full`    | boolean | no               | `true` for expanded fields (body, all recipients). Default: minimal.    |
+| Parameter         | Type    | Required         | Description |
+| ----------------- | ------- | ---------------- | ----------- |
+| `conversation_id` | string  | one of the two*  | Conversation ID |
+| `message_id`      | string  | one of the two*  | Message ID fallback |
+| `top`             | integer | no               | Max messages (1-50) |
+| `include_full`    | boolean | no               | Expanded fields |
 
-\*At least one of `conversation_id` or `message_id` must be provided.
-
-**Example** — get thread by conversation ID:
-
-```json
-{
-  "name": "get_email_thread",
-  "arguments": { "conversation_id": "AAQk...", "include_full": true }
-}
-```
-
-**Example** — get thread by message ID:
-
-```json
-{
-  "name": "get_email_thread",
-  "arguments": { "message_id": "AAMk...", "top": 20 }
-}
-```
-
-**Response**:
-
-```json
-{
-  "conversation_id": "AAQk...",
-  "message_count": 4,
-  "messages": [
-    {
-      "id": "AAMk...",
-      "subject": "Re: Q4 Budget Report",
-      "from": { "address": "finance@contoso.com", "name": "Finance Team" },
-      "received_at": "2026-02-18T10:00:00Z",
-      "is_read": true,
-      "web_link": "https://outlook.office365.com/owa/?itemid=..."
-    },
-    {
-      "id": "AAMk...",
-      "subject": "Re: Q4 Budget Report",
-      "from": { "address": "jane@contoso.com", "name": "Jane Doe" },
-      "received_at": "2026-02-19T14:30:00Z",
-      "is_read": true,
-      "web_link": "https://outlook.office365.com/owa/?itemid=..."
-    }
-  ]
-}
-```
-
-> **Implementation note**: messages are sorted client-side by
-> `receivedDateTime` ascending (oldest-first). Exchange Online does not support
-> combining `$filter` on `conversationId` with `$orderby`, so sorting is
-> performed after retrieval.
-
----
+*At least one of `conversation_id` or `message_id` must be provided.
 
 ### 6. `get_file_metadata`
 
-Get metadata for a OneDrive/SharePoint file by `drive_id` and `item_id` (both
-returned by `find` in file results). Returns file name, path, size, modified
-date, web URL, and creator info.
+Get metadata for a OneDrive/SharePoint file.
 
-| Parameter      | Type    | Required | Description                                                                                |
-| -------------- | ------- | -------- | ------------------------------------------------------------------------------------------ |
-| `drive_id`     | string  | yes      | Drive ID from `find` file results (`resource.parentReference.driveId` or `drive_id` field) |
-| `item_id`      | string  | yes      | Item ID from `find` file results (`resource.id` or `item_id` field)                        |
-| `include_full` | boolean | no       | `true` for expanded fields (parent path, created/modified by). Default: minimal.           |
-
-**Example**:
-
-```json
-{
-  "name": "get_file_metadata",
-  "arguments": { "drive_id": "b!abc...", "item_id": "01XYZ...", "include_full": true }
-}
-```
-
-**Response** (minimal):
-
-```json
-{
-  "id": "01XYZ...",
-  "drive_id": "b!abc...",
-  "name": "Budget_Q4_2026.xlsx",
-  "path": "/drives/b!abc.../root:/Finance/Reports",
-  "modified_at": "2026-02-20T14:30:00Z",
-  "size": 45321,
-  "web_url": "https://contoso.sharepoint.com/sites/Finance/Shared Documents/Budget_Q4_2026.xlsx"
-}
-```
-
-**Response** (full — `include_full: true`):
-
-```json
-{
-  "id": "01XYZ...",
-  "drive_id": "b!abc...",
-  "name": "Budget_Q4_2026.xlsx",
-  "path": "/drives/b!abc.../root:/Finance/Reports",
-  "modified_at": "2026-02-20T14:30:00Z",
-  "size": 45321,
-  "web_url": "https://contoso.sharepoint.com/sites/Finance/Shared Documents/Budget_Q4_2026.xlsx",
-  "file": { "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
-  "created_by": { "user": { "displayName": "Jane Doe" } },
-  "modified_by": { "user": { "displayName": "Bob Smith" } },
-  "parent_reference": { "driveId": "b!abc...", "path": "/drives/b!abc.../root:/Finance/Reports" }
-}
-```
-
----
+| Parameter      | Type    | Required | Description |
+| -------------- | ------- | -------- | ----------- |
+| `drive_id`     | string  | yes      | Drive ID |
+| `item_id`      | string  | yes      | Item ID |
+| `include_full` | boolean | no       | Expanded fields |
 
 ### 7. `get_file_content`
 
-Download and return the content of a OneDrive/SharePoint file. Text files
-(`text/*`, `application/json`, `application/xml`, `application/javascript`) are
-returned inline as UTF-8 text with optional truncation. Binary files are returned
-as base64-encoded strings. Maximum file size: 10 MB.
+Access file content from OneDrive/SharePoint.
 
-| Parameter   | Type    | Required | Description                                                                    |
-| ----------- | ------- | -------- | ------------------------------------------------------------------------------ |
-| `drive_id`  | string  | yes      | Drive ID from `find` file results                                              |
-| `item_id`   | string  | yes      | Item ID from `find` file results                                               |
-| `max_chars` | integer | no       | Max chars for text content (1-50000, default from config). Ignored for binary. |
-
-**Example** — read a text file:
-
-```json
-{
-  "name": "get_file_content",
-  "arguments": { "drive_id": "b!abc...", "item_id": "01XYZ...", "max_chars": 10000 }
-}
-```
-
-**Response** (text):
-
-```json
-{
-  "name": "meeting-notes.md",
-  "mime_type": "text/markdown",
-  "size_bytes": 2048,
-  "encoding": "text",
-  "content": "# Sprint Planning Notes\n\n## Action Items\n- Review backlog...",
-  "truncated": false
-}
-```
-
-**Response** (binary):
-
-```json
-{
-  "name": "logo.png",
-  "mime_type": "image/png",
-  "size_bytes": 15360,
-  "encoding": "base64",
-  "content": "iVBORw0KGgoAAAANSUhEUgAA...",
-  "truncated": false
-}
-```
-
-**Error** — file too large:
-
-```json
-{
-  "isError": true,
-  "content": [{ "type": "text", "text": "VALIDATION_ERROR: file 'database.bak' is 52428800 bytes, exceeds 10485760 byte limit" }]
-}
-```
-
----
+| Parameter   | Type    | Required | Description |
+| ----------- | ------- | -------- | ----------- |
+| `drive_id`  | string  | yes      | Drive ID |
+| `item_id`   | string  | yes      | Item ID |
+| `mode`      | enum    | no       | `"metadata"` (default), `"inline"`, `"binary"`, `"parsed"` |
+| `max_chars` | integer | no       | Max chars for `inline` and `parsed` modes |
 
 ### 8. `compose_email`
 
-Compose an email: draft, send, reply, or reply-all. Write operations require `confirm=true`.
+Compose an email: draft, send, reply, or reply-all.
 
-| Parameter         | Type               | Required            | Description                                                                                              |
-| ----------------- | ------------------ | ------------------- | -------------------------------------------------------------------------------------------------------- |
-| `mode`            | enum               | yes                 | `"draft"`, `"send"`, `"reply"`, `"reply_all"`                                                            |
-| `to`              | string or string[] | for draft/send      | Recipient email(s). Comma-separated string or array.                                                     |
-| `subject`         | string             | for draft/send      | Email subject line                                                                                       |
-| `body_html`       | string             | yes                 | Email body (HTML). Sanitized server-side.                                                                |
-| `message_id`      | string             | for reply/reply_all | ID of the message to reply to                                                                            |
-| `attachments`     | object[]           | no                  | Inline attachments: `{ name, content_base64, content_type }`                                             |
-| `attachment_refs` | object[]           | no                  | M365 file references: `{ drive_id, item_id, name }`                                                      |
-| `confirm`         | boolean            | no                  | `true` to execute send/reply. Without it, `send` returns a preview; `reply`/`reply_all` creates a draft. |
-
-#### Attachment limits
-
-- Maximum **10** attachments per email (inline + refs combined)
-- Maximum **5 MB** per individual attachment
-- Maximum **10 MB** total across all attachments
-- Exceeding any limit returns `VALIDATION_ERROR`
-
-**Example** — send an email:
-
-```json
-{
-  "name": "compose_email",
-  "arguments": {
-    "mode": "send",
-    "to": ["bob@contoso.com"],
-    "subject": "Meeting notes",
-    "body_html": "<p>Hi Bob, here are the notes from today's meeting.</p>",
-    "confirm": true
-  }
-}
-```
-
-**Example** — reply to an email:
-
-```json
-{
-  "name": "compose_email",
-  "arguments": {
-    "mode": "reply",
-    "message_id": "AAMk...",
-    "body_html": "<p>Thanks, I'll review this today.</p>",
-    "confirm": true
-  }
-}
-```
-
-> **Guardrail**: for `draft` and `send` modes, all recipient addresses in `to`
-> are checked against the [Domain Allowlist](#domain-allowlist). If any domain
-> is not permitted, the tool returns `FORBIDDEN` before creating the draft or
-> sending. Reply modes (`reply`, `reply_all`) are **not** domain-checked — they
-> reply to the existing conversation's recipients.
->
-> **Confirm behavior by mode**:
->
-> - `send` without `confirm` — returns a `requires_confirmation` preview
-> - `send` with `confirm: true` — sends immediately
-> - `reply`/`reply_all` without `confirm` — creates a draft in the user's mailbox
-> - `reply`/`reply_all` with `confirm: true` — sends the reply immediately
-> - `draft` — always creates a draft (no `confirm` needed)
-
----
+| Parameter         | Type               | Required            | Description |
+| ----------------- | ------------------ | ------------------- | ----------- |
+| `mode`            | enum               | yes                 | `"draft"`, `"send"`, `"reply"`, `"reply_all"` |
+| `to`              | string or string[] | for draft/send      | Recipient email(s) |
+| `subject`         | string             | for draft/send      | Subject |
+| `body_html`       | string             | yes                 | HTML body |
+| `message_id`      | string             | for reply/reply_all | Message ID |
+| `attachments`     | object[]           | no                  | Inline attachments |
+| `attachment_refs` | object[]           | no                  | M365 file refs |
+| `confirm`         | boolean            | no                  | Required for send/reply/reply_all execution |
 
 ### 9. `schedule_meeting`
 
-Schedule a meeting. Supports explicit start/end times or automatic free-slot
-finding. Supports Teams meetings and agendas. Requires `confirm=true`.
+Schedule a meeting with explicit time or preferred window.
 
-| Parameter          | Type     | Required | Description                                                                                                            |
-| ------------------ | -------- | -------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `subject`          | string   | yes      | Meeting subject                                                                                                        |
-| `attendees`        | string[] | no       | Attendee email addresses                                                                                               |
-| `start`            | string   | no\*     | Explicit start (ISO 8601 with offset, e.g. `"2026-02-23T09:00:00-05:00"`)                                              |
-| `end`              | string   | no\*     | Explicit end (ISO 8601 with offset)                                                                                    |
-| `preferred_start`  | string   | no\*     | Window start for auto free-slot finding                                                                                |
-| `preferred_end`    | string   | no\*     | Window end for auto free-slot finding                                                                                  |
-| `duration_minutes` | integer  | no       | Meeting duration (1-480, default 60). Used with preferred window.                                                      |
-| `timezone`         | string   | no       | IANA timezone (e.g. `"America/New_York"`). Default: configured timezone (see [Timezone Handling](#timezone-handling)). |
-| `agenda`           | string   | no       | Meeting agenda text                                                                                                    |
-| `teams_meeting`    | boolean  | no       | `true` to create a Teams meeting with join link                                                                        |
-| `body_html`        | string   | no       | Custom HTML body (overrides agenda)                                                                                    |
-| `confirm`          | boolean  | no       | `true` to create. Without it, returns a preview.                                                                       |
+| Parameter          | Type     | Required | Description |
+| ------------------ | -------- | -------- | ----------- |
+| `subject`          | string   | yes      | Meeting subject |
+| `attendees`        | string[] | no       | Attendee emails |
+| `start`            | string   | no*      | Explicit start |
+| `end`              | string   | no*      | Explicit end |
+| `preferred_start`  | string   | no*      | Window start |
+| `preferred_end`    | string   | no*      | Window end |
+| `duration_minutes` | integer  | no       | Duration |
+| `timezone`         | string   | no       | IANA timezone |
+| `agenda`           | string   | no       | Agenda text |
+| `teams_meeting`    | boolean  | no       | Teams meeting toggle |
+| `body_html`        | string   | no       | Custom body |
+| `confirm`          | boolean  | no       | Required to execute |
 
-\*Provide either `start` + `end` OR `preferred_start` + `preferred_end`.
-
-**Example** — schedule with auto free-slot:
-
-```json
-{
-  "name": "schedule_meeting",
-  "arguments": {
-    "subject": "Project Sync",
-    "attendees": ["bob@contoso.com", "alice@contoso.com"],
-    "preferred_start": "2026-02-23T08:00:00-05:00",
-    "preferred_end": "2026-02-23T17:00:00-05:00",
-    "duration_minutes": 30,
-    "timezone": "America/New_York",
-    "teams_meeting": true,
-    "agenda": "Discuss project milestones and blockers",
-    "confirm": true
-  }
-}
-```
-
-> **Guardrail**: all attendee addresses are checked against the
-> [Domain Allowlist](#domain-allowlist). If any domain is not permitted, the
-> tool returns `FORBIDDEN` before creating the meeting.
-
----
+*Provide either `start` + `end` OR `preferred_start` + `preferred_end`.
 
 ### 10. `respond_to_meeting`
 
-Respond to a meeting invitation or cancel a meeting you organized. Requires
-`confirm=true` for accept/decline/cancel.
+Respond to a meeting invitation or cancel an organized meeting.
 
-| Parameter   | Type    | Required | Description                                                                     |
-| ----------- | ------- | -------- | ------------------------------------------------------------------------------- |
-| `event_id`  | string  | yes      | Event ID                                                                        |
+| Parameter   | Type    | Required | Description |
+| ----------- | ------- | -------- | ----------- |
+| `event_id`  | string  | yes      | Event ID |
 | `action`    | enum    | yes      | `"accept"`, `"decline"`, `"tentativelyAccept"`, `"cancel"`, `"reply_all_draft"` |
-| `comment`   | string  | no       | Optional comment with response (e.g. "I'll be 5 min late")                      |
-| `body_html` | string  | no       | HTML body for `reply_all_draft` mode                                            |
-| `confirm`   | boolean | no       | `true` to execute accept/decline/cancel. Not needed for `reply_all_draft`.      |
-
-**Example** — accept a meeting:
-
-```json
-{
-  "name": "respond_to_meeting",
-  "arguments": {
-    "event_id": "AAMk...",
-    "action": "accept",
-    "comment": "Looking forward to it",
-    "confirm": true
-  }
-}
-```
-
-**Example** — create a reply-all draft to meeting attendees:
-
-```json
-{
-  "name": "respond_to_meeting",
-  "arguments": {
-    "event_id": "AAMk...",
-    "action": "reply_all_draft",
-    "body_html": "<p>Quick update: I've shared the deck in the Teams channel.</p>"
-  }
-}
-```
-
----
+| `comment`   | string  | no       | Optional comment |
+| `body_html` | string  | no       | Reply-all HTML |
+| `confirm`   | boolean | no       | Required for accept/decline/cancel |
 
 ### 11. `audit_list`
 
-List recent audit log entries. Records all write actions and blocked attempts.
+List recent audit log entries.
 
-| Parameter | Type    | Required | Description                                       |
-| --------- | ------- | -------- | ------------------------------------------------- |
-| `limit`   | integer | no       | Number of entries to return (1-1000, default 100) |
+| Parameter | Type    | Required | Description |
+| --------- | ------- | -------- | ----------- |
+| `limit`   | integer | no       | Number of entries (1-1000, default 100) |
 
-**Example**:
+### 12. `list_chats`
 
-```json
-{ "name": "audit_list", "arguments": { "limit": 20 } }
-```
+List Teams chats for the current user.
 
-**Response**:
+| Parameter        | Type    | Required | Description |
+| ---------------- | ------- | -------- | ----------- |
+| `top`            | integer | no       | Max results (1-50, default 10) |
+| `chat_type`      | enum    | no       | `"oneOnOne"`, `"group"`, `"meeting"` |
+| `expand_members` | boolean | no       | Include member list |
+| `include_full`   | boolean | no       | Expanded fields |
 
-```json
-{
-  "count": 3,
-  "items": [
-    {
-      "id": "uuid",
-      "timestamp": "2026-02-21T10:30:00.000Z",
-      "action": "compose_email_send",
-      "user": "jane@contoso.com",
-      "details": { "recipientCount": 1, "subject": "Meeting notes" },
-      "status": "success"
-    }
-  ]
-}
-```
+### 13. `get_chat`
+
+Get a specific Teams chat by ID.
+
+| Parameter      | Type    | Required | Description |
+| -------------- | ------- | -------- | ----------- |
+| `chat_id`      | string  | yes      | Chat ID |
+| `include_full` | boolean | no       | Expanded fields |
+
+### 14. `list_chat_messages`
+
+List messages in a Teams chat.
+
+| Parameter      | Type    | Required | Description |
+| -------------- | ------- | -------- | ----------- |
+| `chat_id`      | string  | yes      | Chat ID |
+| `top`          | integer | no       | Max results (1-50, default 10) |
+| `include_full` | boolean | no       | Expanded fields |
+
+### 15. `get_chat_message`
+
+Get a specific message from a Teams chat.
+
+| Parameter      | Type    | Required | Description |
+| -------------- | ------- | -------- | ----------- |
+| `chat_id`      | string  | yes      | Chat ID |
+| `message_id`   | string  | yes      | Message ID |
+| `include_full` | boolean | no       | Expanded fields |
+
+### 16. `send_chat_message`
+
+Send a message to an existing Teams chat.
+
+| Parameter | Type           | Required | Description |
+| --------- | -------------- | -------- | ----------- |
+| `chat_id` | string         | yes      | Chat ID |
+| `content` | string         | yes      | Message content |
+| `confirm` | literal `true` | no       | Required to execute send |
+
+### 17. `resolve_meeting`
+
+Resolve a Teams meeting `joinWebUrl` to a meeting ID.
+
+| Parameter      | Type   | Required | Description |
+| -------------- | ------ | -------- | ----------- |
+| `join_web_url` | string | yes      | Teams meeting join URL |
+
+### 18. `list_meeting_transcripts`
+
+List transcripts for a Teams meeting.
+
+| Parameter    | Type   | Required | Description |
+| ------------ | ------ | -------- | ----------- |
+| `meeting_id` | string | yes      | Meeting ID |
+
+### 19. `get_meeting_transcript`
+
+Get metadata for a specific meeting transcript.
+
+| Parameter       | Type   | Required | Description |
+| --------------- | ------ | -------- | ----------- |
+| `meeting_id`    | string | yes      | Meeting ID |
+| `transcript_id` | string | yes      | Transcript ID |
+
+### 20. `get_transcript_content`
+
+Get WebVTT content of a meeting transcript.
+
+| Parameter       | Type    | Required | Description |
+| --------------- | ------- | -------- | ----------- |
+| `meeting_id`    | string  | yes      | Meeting ID |
+| `transcript_id` | string  | yes      | Transcript ID |
+| `max_chars`     | integer | no       | Max chars for content |
+
+### 21. `retrieve_context`
+
+Semantic retrieval across M365 content for grounding context.
+
+| Parameter               | Type   | Required | Description |
+| ----------------------- | ------ | -------- | ----------- |
+| `query`                 | string | yes      | Natural language query (max 1500 chars) |
+| `data_source`           | enum   | no       | `"sharePoint"` (default), `"oneDriveBusiness"`, `"externalItem"` |
+| `max_results`           | int    | no       | Max results (1-25, default 10) |
+| `filter_expression`     | string | no       | Raw KQL filter expression |
+| `filter_author`         | string | no       | Filter by author |
+| `filter_file_extension` | string | no       | Filter by extension |
+| `filter_filename`       | string | no       | Filter by filename |
+| `filter_path`           | string | no       | Filter by path |
+| `filter_site_id`        | string | no       | Filter by site ID |
+| `filter_title`          | string | no       | Filter by title |
+| `filter_modified_after` | string | no       | ISO timestamp lower bound |
+| `filter_join`           | enum   | no       | `"AND"` (default) or `"OR"` |
+
+### 22. `retrieve_context_multi`
+
+Batched semantic retrieval for up to 20 queries in one request.
+
+| Parameter               | Type     | Required | Description |
+| ----------------------- | -------- | -------- | ----------- |
+| `queries`               | string[] | yes      | Array of queries (1-20, max 1500 chars each) |
+| `data_source`           | enum     | no       | `"sharePoint"` (default), `"oneDriveBusiness"`, `"externalItem"` |
+| `max_results`           | int      | no       | Max results per query (1-25, default 10) |
+| `filter_expression`     | string   | no       | Raw KQL filter expression |
+| `filter_author`         | string   | no       | Filter by author |
+| `filter_file_extension` | string   | no       | Filter by extension |
+| `filter_filename`       | string   | no       | Filter by filename |
+| `filter_path`           | string   | no       | Filter by path |
+| `filter_site_id`        | string   | no       | Filter by site ID |
+| `filter_title`          | string   | no       | Filter by title |
+| `filter_modified_after` | string   | no       | ISO timestamp lower bound |
+| `filter_join`           | enum     | no       | `"AND"` (default) or `"OR"` |
 
 ---
 
-## Common Workflows
+## Required OAuth Scopes (Delegated)
 
-### "Show me my meetings on Monday"
+All scopes are **delegated user auth** - not application-only.
 
-1. Resolve "Monday" to concrete dates (e.g. today is Sat Feb 21 → Monday = Feb 23)
-2. Call `find` with `entity_types: ["events"]`, `start_date`, `end_date`
-
-```json
-{
-  "name": "find",
-  "arguments": {
-    "query": "meetings",
-    "entity_types": ["events"],
-    "start_date": "2026-02-23T00:00:00",
-    "end_date": "2026-02-24T00:00:00"
-  }
-}
-```
-
-### "What's on my calendar this week?"
-
-```json
-{
-  "name": "find",
-  "arguments": {
-    "query": "meetings",
-    "entity_types": ["events"],
-    "start_date": "2026-02-21T00:00:00",
-    "end_date": "2026-02-28T00:00:00"
-  }
-}
-```
-
-### "Find emails from John about the budget and reply"
-
-1. Search: `find` with `query: "emails from John about budget"`, `entity_types: ["mail"]`
-2. Get details: `get_email` with the `id` from step 1, `include_full: true`
-3. Read thread: `get_email_thread` with the `conversation_id` from step 2 to see full context
-4. Reply: `compose_email` with `mode: "reply"`, `message_id`, `body_html`, `confirm: true`
-
-### "Prepare me for my 2pm meeting"
-
-1. Find the meeting: `find` with `entity_types: ["events"]`, `start_date`/`end_date` around 2pm
-2. Get full details: `get_event` with the `event_id` from step 1, `include_full: true`
-3. Search for context: `find` with the meeting subject/attendees to locate related emails and files
-
-> **Note**: Briefing composition (combining meeting details, related docs, and
-> attendee context into a coherent preparation summary) is handled by the
-> consuming LLM layer, not this gateway.
-
-### "Schedule a 30-min Teams call with Bob tomorrow morning"
-
-```json
-{
-  "name": "schedule_meeting",
-  "arguments": {
-    "subject": "Sync with Bob",
-    "attendees": ["bob@contoso.com"],
-    "preferred_start": "2026-02-22T08:00:00-05:00",
-    "preferred_end": "2026-02-22T12:00:00-05:00",
-    "duration_minutes": 30,
-    "teams_meeting": true,
-    "confirm": true
-  }
-}
-```
-
-### "Read the contents of a document I found"
-
-1. Search: `find` with `query: "project proposal"`, `entity_types: ["files"]`
-2. Get content: `get_file_content` with `drive_id` and `item_id` from the file result
-
-```json
-{
-  "name": "get_file_content",
-  "arguments": { "drive_id": "b!abc...", "item_id": "01XYZ...", "max_chars": 20000 }
-}
-```
-
-### "Catch me up on an email conversation"
-
-1. Search: `find` with `query: "project kickoff from Alice"`, `entity_types: ["mail"]`
-2. Get email: `get_email` with the `id` from step 1, `include_full: true` (to get `conversation_id`)
-3. Get thread: `get_email_thread` with the `conversation_id` from step 2
-
-```json
-{
-  "name": "get_email_thread",
-  "arguments": { "conversation_id": "AAQk...", "include_full": true }
-}
-```
+| Scope                              | Tools                                                                                                 |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `Mail.Read`                        | `find` (mail), `get_email`, `get_email_thread`                                                        |
+| `Mail.ReadWrite`                   | `compose_email` (draft)                                                                               |
+| `Mail.Send`                        | `compose_email` (send, reply, reply_all)                                                              |
+| `Calendars.Read`                   | `find` (events), `get_event`                                                                          |
+| `Calendars.Read.Shared`            | `find` (events from shared calendars)                                                                 |
+| `Calendars.ReadWrite`              | `schedule_meeting`, `respond_to_meeting`                                                              |
+| `User.Read`                        | `auth` (whoami, status)                                                                               |
+| `Files.Read.All`                   | `find` (files), `get_file_metadata`, `get_file_content`, `retrieve_context`, `retrieve_context_multi` |
+| `Sites.Read.All`                   | `find` (files on SharePoint), `retrieve_context`, `retrieve_context_multi`                            |
+| `Chat.Read`                        | `list_chats`, `get_chat`, `list_chat_messages`, `get_chat_message`                                    |
+| `ChatMessage.Send`                 | `send_chat_message`                                                                                   |
+| `OnlineMeetings.Read`              | `resolve_meeting`                                                                                     |
+| `OnlineMeetingTranscript.Read.All` | `list_meeting_transcripts`, `get_meeting_transcript`, `get_transcript_content`                        |
 
 ---
 
 ## Timezone Handling
 
 All calendar/event operations use a **configured default timezone** (set in
-`config.yaml` under `calendar.defaultTimezone`; defaults to `UTC`). This affects:
-
-- **`find`** (date-range mode) — event times in results are returned in the
-  configured timezone. The response includes a `timezone` field indicating which
-  timezone was used.
-- **`get_event`** — event start/end times are returned in the configured timezone.
-- **`schedule_meeting`** — when using auto free-slot finding, the `timezone`
-  parameter defaults to the configured timezone. When providing explicit `start`
-  and `end`, include the UTC offset in the ISO 8601 string (e.g.
-  `"2026-02-23T09:00:00-05:00"` for America/New_York).
+`config.yaml` under `calendar.defaultTimezone`; defaults to `UTC`).
 
 The default timezone is set in the gateway's `config.yaml` under
 `calendar.defaultTimezone` using IANA timezone names (e.g. `America/New_York`,
 `Europe/London`, `Asia/Tokyo`). The gateway maps IANA names to the Windows
 timezone names required by the Graph API internally. Deployments may override
 this value per environment.
-
-**Agent guidance**: When the user says "9am" without specifying a timezone, use
-the configured default timezone offset. If the default is `UTC`, use `+00:00`.
-If it is `America/New_York`, use `-05:00` (standard) or `-04:00` (DST).
 
 ---
 
@@ -1108,28 +563,30 @@ By default, responses include only high-signal fields (IDs, subject/title,
 sender/organizer, timestamps, links, short snippets).
 
 Pass `include_full=true` on `get_email`, `get_event`, `get_email_thread`, and
-`get_file_metadata` to expand:
-
-- **Email**: full body text, all recipients (to, cc), conversation ID, web link
-- **Event**: full attendee list with response status, body preview, online meeting details
-- **Email thread**: full body and recipients for each message in the thread
-- **File metadata**: file object (with mimeType), created/modified by (Graph objects), parent reference
+`get_file_metadata` to expand details.
 
 ---
 
 ## Caching
 
-Read-only `get_*` tools use a short-lived in-memory micro-cache to reduce
-redundant Graph API calls during multi-step agent workflows.
+Read-only `get_*` tools use a short-lived in-memory micro-cache.
 
-| Tool                | Cache Key                                      | TTL  |
-| ------------------- | ---------------------------------------------- | ---- |
-| `get_email`         | `email:{message_id}`                           | 30 s |
-| `get_event`         | `event:{event_id}`                             | 30 s |
-| `get_email_thread`  | `thread:{conversationId}:{include_full}:{top}` | 30 s |
-| `get_file_metadata` | `file:{drive_id}:{item_id}`                    | 30 s |
+| Tool                       | Cache Key                                      | TTL  |
+| -------------------------- | ---------------------------------------------- | ---- |
+| `get_email`                | `email:{message_id}`                           | 30 s |
+| `get_event`                | `event:{event_id}`                             | 30 s |
+| `get_email_thread`         | `thread:{conversationId}:{include_full}:{top}` | 30 s |
+| `get_file_metadata`        | `file:{drive_id}:{item_id}`                    | 30 s |
+| `list_chats`               | `chats:{chatType}:{expandMembers}:{top}`       | 30 s |
+| `get_chat`                 | `chat:{chatId}`                                | 30 s |
+| `list_chat_messages`       | `chatmsgs:{chatId}:{top}`                      | 30 s |
+| `get_chat_message`         | `chatmsg:{chatId}:{messageId}`                 | 30 s |
+| `resolve_meeting`          | `meeting:{joinWebUrl}`                         | 30 s |
+| `list_meeting_transcripts` | `transcripts:{meetingId}`                      | 30 s |
+| `get_meeting_transcript`   | `transcript:{meetingId}:{transcriptId}`        | 30 s |
 
-- `find` results and `get_file_content` downloads are **not** cached.
-- Write operations (`compose_email`, `schedule_meeting`, `respond_to_meeting`)
-  are never cached.
+- `find` results and `get_file_content` calls (all modes) are **not** cached.
+- `retrieve_context` and `retrieve_context_multi` are **not** cached.
+- `get_transcript_content` is **not** cached (content may be large).
+- Write operations are never cached.
 - Maximum 500 cache entries; oldest evicted when full.

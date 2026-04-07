@@ -28,6 +28,7 @@ Use `ocp` as the primary interface. `make` remains a compatibility alias layer. 
 | Deploy user app | `./platform/cli/ocp deploy user --env dev --user alice` | `make add-user ENV=dev U=alice` |
 | Remove user app | `./platform/cli/ocp user remove --env dev --user alice` | `make remove-user ENV=dev U=alice` |
 | Signal deploy | `./platform/cli/ocp signal deploy --env dev` | `make signal-deploy ENV=dev` |
+| Check Graph auth identity | `./platform/cli/ocp graph auth-check --env prod --user alice --user bob` | — |
 | Reset platform | `./platform/cli/ocp reset --env dev --nuke-only` | `make nuke-all ENV=dev` |
 
 ## Architecture
@@ -123,6 +124,12 @@ Load order (shared first, then per-user override):
 | `SIGNAL_BOT_NUMBER` | Signal bot phone (E.164) | -- | If using Signal |
 | `SIGNAL_PROXY_AUTH_TOKEN` | Signal proxy auth token | -- | If using Signal |
 | `SIGNAL_CLI_URL` | Signal proxy FQDN | Auto-discovered from TF | Manual for prod |
+
+### Teams Identity Registry
+
+- Teams relay resolves per-user routing from Azure Table Storage (`userrouting`) using `activity.from.aadObjectId`.
+- Routing records include `aad_object_id`, `user_slug`, `upstream_url`, `status`, and `updated_at`.
+- Manage routing records with `ocp teams routing upsert|get|disable`.
 
 ### Variable Reference -- Per-User Config
 

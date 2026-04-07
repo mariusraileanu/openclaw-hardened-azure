@@ -46,6 +46,12 @@
       "required": false
     },
     {
+      "name": "BOT_NAME",
+      "scope": "shared",
+      "type": "string",
+      "required": false
+    },
+    {
       "name": "NFS_SA_NAME",
       "scope": "shared",
       "type": "string",
@@ -127,12 +133,6 @@
       "name": "MSTEAMS_APP_SECRET_VALUE",
       "scope": "shared",
       "type": "secret",
-      "required": false
-    },
-    {
-      "name": "MSTEAMS_USER_SLUG_MAP",
-      "scope": "shared",
-      "type": "json_object",
       "required": false
     },
     {

@@ -142,12 +142,6 @@ variable "msteams_tenant_id" {
   default     = ""
 }
 
-variable "msteams_user_slug_map" {
-  description = "JSON object mapping Azure AD Object IDs (lowercase) to user slugs for relay routing. Example: {\"38293292-f32d-42ef-a706-756ef42bfa91\":\"mlucian\"}"
-  type        = string
-  default     = "{}"
-}
-
 variable "subnet_func_cidr" {
   description = "CIDR for the Azure Functions VNet integration subnet (/27 minimum)"
   type        = string
@@ -176,7 +170,7 @@ variable "func_relay_name" {
 }
 
 variable "bot_name" {
-  description = "Override the Azure Bot Service name (globally unique in Bot Framework). Defaults to bot-openclaw-{env}."
+  description = "Override the Azure Bot Service name (globally unique in Bot Framework)."
   type        = string
   default     = ""
 }

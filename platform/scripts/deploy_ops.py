@@ -32,7 +32,6 @@ def _prepare_env(
     env_map.setdefault("AZURE_OWNER_SLUG", "platform")
     env_map.setdefault("CAE_INTERNAL_ONLY", "true")
     env_map.setdefault("MSTEAMS_RELAY_ENABLED", "false")
-    env_map.setdefault("MSTEAMS_USER_SLUG_MAP", "{}")
     return env_map
 
 

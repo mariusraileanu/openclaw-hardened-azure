@@ -15,6 +15,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 from config_ops import bootstrap_config
 from deploy_ops import deploy_shared, deploy_user, import_user, remove_user
 from doctor_ops import doctor
+from graph_gateway_ops import graph_auth_check
 from observability_ops import logs, status
 from reset_ops import reset
 from signal_ops import (
@@ -32,6 +33,9 @@ from teams_ops import (
     teams_package,
     teams_relay_build,
     teams_relay_deploy,
+    teams_routing_disable,
+    teams_routing_get,
+    teams_routing_upsert,
     teams_release_check,
     teams_validate,
 )
@@ -180,8 +184,32 @@ def cmd_teams_release_check(args: argparse.Namespace) -> int:
     return _run_op(teams_release_check, REPO_ROOT)
 
 
+def cmd_teams_routing_upsert(args: argparse.Namespace) -> int:
+    return _run_op(
+        teams_routing_upsert,
+        REPO_ROOT,
+        args.env,
+        args.aad_object_id,
+        args.user_slug,
+        args.upstream_url,
+        args.status,
+    )
+
+
+def cmd_teams_routing_get(args: argparse.Namespace) -> int:
+    return _run_op(teams_routing_get, REPO_ROOT, args.env, args.aad_object_id)
+
+
+def cmd_teams_routing_disable(args: argparse.Namespace) -> int:
+    return _run_op(teams_routing_disable, REPO_ROOT, args.env, args.aad_object_id)
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     return _run_op(doctor, REPO_ROOT, args.env, args.user)
+
+
+def cmd_graph_auth_check(args: argparse.Namespace) -> int:
+    return _run_op(graph_auth_check, REPO_ROOT, args.env, args.user)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -338,10 +366,53 @@ def build_parser() -> argparse.ArgumentParser:
     )
     teams_release_check_cmd.set_defaults(func=cmd_teams_release_check)
 
+    teams_routing_parser = teams_sub.add_parser(
+        "routing", help="Manage Teams relay routing records"
+    )
+    teams_routing_sub = teams_routing_parser.add_subparsers(
+        dest="teams_routing_cmd", required=True
+    )
+
+    teams_routing_upsert_cmd = teams_routing_sub.add_parser(
+        "upsert", help="Create or update a routing record"
+    )
+    teams_routing_upsert_cmd.add_argument("--env", default="dev")
+    teams_routing_upsert_cmd.add_argument("--aad-object-id", required=True)
+    teams_routing_upsert_cmd.add_argument("--user-slug", required=True)
+    teams_routing_upsert_cmd.add_argument("--upstream-url", required=True)
+    teams_routing_upsert_cmd.add_argument(
+        "--status", default="active", choices=["active", "provisioning", "disabled"]
+    )
+    teams_routing_upsert_cmd.set_defaults(func=cmd_teams_routing_upsert)
+
+    teams_routing_get_cmd = teams_routing_sub.add_parser(
+        "get", help="Get one routing record"
+    )
+    teams_routing_get_cmd.add_argument("--env", default="dev")
+    teams_routing_get_cmd.add_argument("--aad-object-id", required=True)
+    teams_routing_get_cmd.set_defaults(func=cmd_teams_routing_get)
+
+    teams_routing_disable_cmd = teams_routing_sub.add_parser(
+        "disable", help="Set status=disabled for a routing record"
+    )
+    teams_routing_disable_cmd.add_argument("--env", default="dev")
+    teams_routing_disable_cmd.add_argument("--aad-object-id", required=True)
+    teams_routing_disable_cmd.set_defaults(func=cmd_teams_routing_disable)
+
     doctor_parser = subparsers.add_parser("doctor", help="Run local preflight diagnostics")
     doctor_parser.add_argument("--env", default="dev")
     doctor_parser.add_argument("--user")
     doctor_parser.set_defaults(func=cmd_doctor)
+
+    graph_parser = subparsers.add_parser("graph", help="Graph gateway operations")
+    graph_sub = graph_parser.add_subparsers(dest="graph_cmd", required=True)
+
+    graph_auth_parser = graph_sub.add_parser(
+        "auth-check", help="Check graph gateway auth identity by user"
+    )
+    graph_auth_parser.add_argument("--env", default="dev")
+    graph_auth_parser.add_argument("--user", action="append", required=True)
+    graph_auth_parser.set_defaults(func=cmd_graph_auth_check)
 
     return parser
 

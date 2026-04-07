@@ -1,64 +1,58 @@
 ---
 name: m365-graph-gateway
-description: Use when the agent needs to read or write Microsoft 365 data (mail, calendar, files) via the M365 Graph MCP gateway. Provides JSON-RPC MCP tools for Microsoft Graph with strong guardrails and confirm-gated write operations.
+description: Use when the agent needs to read or write Microsoft 365 data (mail, calendar, files, Teams chats, transcripts) via the M365 Graph MCP gateway. Provides JSON-RPC MCP tools for Microsoft Graph with strict identity binding, guardrails, and confirm-gated write operations.
 ---
 
 # M365 Graph Gateway Skill
 
-This skill lets the agent call the **M365 Graph MCP gateway**, a platform-managed
-service that wraps the Microsoft 365 Graph API and exposes an HTTP **MCP JSON-RPC
-endpoint**.
+This skill lets the agent call the **m365-graph-mcp-gateway**, a platform-managed
+service that wraps Microsoft Graph behind an HTTP MCP JSON-RPC endpoint.
 
 Use this skill when you need to:
 
-- Work with **mail**: list, search, read, draft, reply, send (with explicit confirmation)
-- Work with **calendar**: list events, check availability, create/modify/cancel meetings
-- Work with **files**: search, retrieve metadata, and read content from SharePoint and OneDrive
+- Work with **mail**: search, read, thread retrieval, draft, reply, send
+- Work with **calendar**: event search/retrieval, scheduling, RSVP/cancel flows
+- Work with **files**: search, metadata, and content retrieval via metadata/inline/binary/parsed modes
+- Work with **Teams chats**: list chats, read messages, and send messages
+- Work with **meeting transcripts**: resolve meeting links and fetch transcript metadata/content
 
-## Execution Method — READ THIS FIRST
+## Execution Method - Read First
 
-You call the gateway using **`curl` via your shell/exec capability**. You do NOT
-need an MCP server registration, a special plugin, or any other wiring. You
-already have everything you need:
+Call the gateway using `curl` from the `bash` tool.
 
-1. **`bash` (shell) tool** — run `curl` commands from this host.
-2. **Network access** — the gateway runs in the same VNet as this agent.
-3. **Gateway-managed auth** — the gateway handles Microsoft auth, but login may
-   require an interactive browser or device-code flow. No raw OAuth tokens are
-   required from the agent.
+You do **not** need additional MCP server registration. You already have:
 
-> **If you find yourself telling the user "I don't have access to M365 tools"
-> or "no MCP tool is wired" — STOP. You are wrong. Use `curl`.** This is a
-> critical mistake that wastes the user's time. You always have access via
-> shell commands.
+1. `bash` execution to run `curl`
+2. Network access to the gateway
+3. Gateway-managed Microsoft auth flow
+
+If you catch yourself claiming "no M365 access," stop and call the gateway.
 
 ## Gateway Endpoints
 
-| Endpoint                        | Method | Purpose              |
-| ------------------------------- | ------ | -------------------- |
-| `${GRAPH_MCP_URL}/mcp`         | POST   | MCP JSON-RPC calls   |
-| `${GRAPH_MCP_URL}/health`      | GET    | Service health check |
-| `${GRAPH_MCP_URL}/auth/status` | GET    | Auth status          |
+| Endpoint | Method | Purpose |
+| --- | --- | --- |
+| `${GRAPH_MCP_URL}/mcp` | POST | MCP JSON-RPC calls |
+| `${GRAPH_MCP_URL}/health` | GET | Service health check |
+| `${GRAPH_MCP_URL}/auth/status` | GET | HTTP auth status |
 
-## Before Your First Tool Call
+## Mandatory Contract Source
 
-**You MUST read `references/TOOL_CONTRACT.md`** before calling any tool for the
-first time in a session. It contains every tool name, parameter, response shape,
-query syntax, and error code. Do not guess parameters — look them up.
+Always read and treat this file as the canonical contract before tool calls:
 
-## Ready-to-Use curl Commands
+- `workspace/skills/m365-graph-gateway/references/TOOL_CONTRACT.md`
 
-Below are copy-paste curl templates for the most common tasks. Replace date
-values with actual dates resolved from "today" in Asia/Dubai (UTC+4).
+Do not guess tool names, args, or response fields.
 
-### Check gateway health + auth endpoint
+## Startup Checklist Per Session
+
+1. Health check:
 
 ```bash
 curl -s ${GRAPH_MCP_URL}/health
-curl -s ${GRAPH_MCP_URL}/auth/status
 ```
 
-### Check auth via MCP `auth` tool (canonical)
+2. MCP auth status (canonical):
 
 ```bash
 curl -s -X POST ${GRAPH_MCP_URL}/mcp \
@@ -67,47 +61,128 @@ curl -s -X POST ${GRAPH_MCP_URL}/mcp \
     "jsonrpc": "2.0",
     "id": 1,
     "method": "tools/call",
-    "params": {
-      "name": "auth",
-      "arguments": {
-        "action": "status"
-      }
-    }
+    "params": { "name": "auth", "arguments": { "action": "status" } }
   }'
 ```
 
-### Start interactive login (device code)
+3. If `logged_in` is false, start device flow:
 
 ```bash
 curl -s -X POST ${GRAPH_MCP_URL}/mcp \
   -H 'Content-Type: application/json' \
   -d '{
     "jsonrpc": "2.0",
-    "id": 1,
+    "id": 2,
     "method": "tools/call",
-    "params": {
-      "name": "auth",
-      "arguments": {
-        "action": "login_device"
-      }
-    }
+    "params": { "name": "auth", "arguments": { "action": "login_device" } }
   }'
 ```
 
-When `login_device` succeeds, surface `verification_uri` and `user_code` to the
-user immediately. Then poll `auth` `status` until `logged_in` is `true`.
+Show `verification_uri` and `user_code`, then poll `auth status`.
 
-### Today's meetings
+## Identity Binding Requirements
 
-Replace `START` and `END` with today's date boundaries in ISO 8601. For example,
-if today is 2026-02-27: `start_date: "2026-02-27T00:00:00"`, `end_date: "2026-02-28T00:00:00"`.
+The gateway enforces strict identity pinning. Ensure runtime config includes:
+
+- `EXPECTED_AAD_OBJECT_ID` (required)
+- `USER_SLUG` (required)
+
+Use `auth` `status` response fields to validate:
+
+- `expected_object_id`
+- `actual_object_id`
+- `identity_match`
+- `identity_binding_status` (`valid`, `invalid`, `missing`)
+
+If binding is invalid, do not proceed with user-data operations.
+
+## JSON-RPC Lifecycle and Transport Notes
+
+- First request should be `initialize`
+- Follow with `notifications/initialized`
+- `ping` is supported
+- Notifications return HTTP 204 (no body)
+- Batch requests are not supported
+- `/mcp` request body limit: 1 MB
+
+## Security and Runtime Notes
+
+- API key auth is optional and controlled by `GRAPH_MCP_API_KEY`
+- If key is configured, include `Authorization: Bearer <key>`
+- `/health` and `/auth/status` are never API-key gated
+- `/mcp` default rate limit: 100 requests / 60-second sliding window
+- Common HTTP failures:
+  - 401 unauthorized
+  - 413 body too large
+  - 429 rate limit exceeded
+
+JSON-RPC errors are returned in HTTP 200 responses.
+
+## Tool Catalog (22 tools)
+
+1. `auth`
+2. `find`
+3. `get_email`
+4. `get_event`
+5. `get_email_thread`
+6. `get_file_metadata`
+7. `get_file_content`
+8. `compose_email`
+9. `schedule_meeting`
+10. `respond_to_meeting`
+11. `audit_list`
+12. `list_chats`
+13. `get_chat`
+14. `list_chat_messages`
+15. `get_chat_message`
+16. `send_chat_message`
+17. `resolve_meeting`
+18. `list_meeting_transcripts`
+19. `get_meeting_transcript`
+20. `get_transcript_content`
+21. `retrieve_context`
+22. `retrieve_context_multi`
+
+## Write Safety Rules
+
+These operations require confirmation workflow:
+
+- `compose_email` with `mode` in `send`, `reply`, `reply_all`
+- `schedule_meeting`
+- `respond_to_meeting` for accept/decline/tentativelyAccept/cancel
+- `send_chat_message`
+
+Pattern:
+
+1. Call without `confirm` to produce preview
+2. Show preview to user
+3. Re-call with `confirm: true` after explicit approval
+
+## Domain Guardrails
+
+Outbound recipients/attendees are checked against allowlists.
+
+- Config key: `guardrails.email.allowDomains`
+- Runtime override: `GRAPH_MCP_ALLOW_DOMAINS` (JSON array)
+- Violations return `FORBIDDEN`
+
+Applies to:
+
+- `compose_email` recipients
+- `schedule_meeting` attendees
+
+## High-Value Calling Patterns
+
+### Meetings on a specific day
+
+Resolve relative date to concrete ISO datetimes, then:
 
 ```bash
 curl -s -X POST ${GRAPH_MCP_URL}/mcp \
   -H 'Content-Type: application/json' \
   -d '{
     "jsonrpc": "2.0",
-    "id": 1,
+    "id": 10,
     "method": "tools/call",
     "params": {
       "name": "find",
@@ -122,17 +197,16 @@ curl -s -X POST ${GRAPH_MCP_URL}/mcp \
   }'
 ```
 
-### Unread emails (top 10)
+### Unread emails
 
-The `query` field supports property filters. Use `isRead:false` — NOT natural
-language like "unread emails" (that returns nothing).
+Use property filter query syntax:
 
 ```bash
 curl -s -X POST ${GRAPH_MCP_URL}/mcp \
   -H 'Content-Type: application/json' \
   -d '{
     "jsonrpc": "2.0",
-    "id": 1,
+    "id": 11,
     "method": "tools/call",
     "params": {
       "name": "find",
@@ -145,200 +219,136 @@ curl -s -X POST ${GRAPH_MCP_URL}/mcp \
   }'
 ```
 
-### Search emails by sender/topic
+### Email thread workflow
 
-Combine property filters with keywords. See `references/TOOL_CONTRACT.md` for
-the full query syntax reference.
+1. `find` mail
+2. `get_email` (`include_full: true`) to get `conversation_id`
+3. `get_email_thread`
 
-```bash
-curl -s -X POST ${GRAPH_MCP_URL}/mcp \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "tools/call",
-    "params": {
-      "name": "find",
-      "arguments": {
-        "query": "from:alice budget Q4",
-        "entity_types": ["mail"],
-        "top": 10
-      }
-    }
-  }'
-```
+### File access workflow
 
-### Get full email by ID
+Prefer metadata first:
 
-After `find` returns mail results, use the `id` field from any result to fetch
-the full email body:
+1. `find` files
+2. `get_file_content` with default `mode: metadata` and use `download_url`
+3. Use `mode: inline` or `mode: binary` only when needed
+4. Use `mode: parsed` for supported Office/PDF formats when readable extracted text is needed
 
-```bash
-curl -s -X POST ${GRAPH_MCP_URL}/mcp \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "tools/call",
-    "params": {
-      "name": "get_email",
-      "arguments": {
-        "message_id": "AAMk...",
-        "include_full": true
-      }
-    }
-  }'
-```
+### Teams transcript workflow
 
-### Get email conversation thread
+1. `list_chats` with `chat_type: meeting`
+2. `get_chat` to retrieve `join_web_url`
+3. `resolve_meeting`
+4. `list_meeting_transcripts`
+5. `get_transcript_content`
 
-After finding an email and getting its full details (with `conversation_id`),
-fetch the entire thread:
+Handle best-effort outcomes gracefully:
 
-```bash
-curl -s -X POST ${GRAPH_MCP_URL}/mcp \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "tools/call",
-    "params": {
-      "name": "get_email_thread",
-      "arguments": {
-        "conversation_id": "AAQk...",
-        "include_full": true
-      }
-    }
-  }'
-```
+- `MEETING_NOT_RESOLVABLE`
+- `TRANSCRIPT_NOT_AVAILABLE` / `available: false`
 
-### Get file content
+## Workflow Examples (Contract-Aligned)
 
-After finding a file, use its `drive_id` and `item_id` to read the content:
+These mirror the canonical examples in `TOOL_CONTRACT.md`.
 
-```bash
-curl -s -X POST ${GRAPH_MCP_URL}/mcp \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "tools/call",
-    "params": {
-      "name": "get_file_content",
-      "arguments": {
-        "drive_id": "b!abc...",
-        "item_id": "01XYZ...",
-        "max_chars": 20000
-      }
-    }
-  }'
-```
+### Show meetings on Monday
 
-## Self-Diagnostic Checklist
+1. Resolve relative date to concrete ISO range.
+2. Call `find` with `entity_types: ["events"]`, `start_date`, `end_date`.
 
-Before asking the user for help or claiming you cannot access M365 data, run
-through this checklist:
+### What is on my calendar this week
 
-1. **Check health**: `curl -s ${GRAPH_MCP_URL}/health`
-   - Connection refused or no response → gateway is down. Tell the user to
-     contact platform admin.
-   - HTTP 200 with `"status":"ok"` → gateway is healthy, proceed.
+Call `find` with `entity_types: ["events"]` and week boundary dates.
 
-2. **Check auth via MCP tool**: call `auth` with `{"action":"status"}`
-   - `logged_in: true` → gateway is ready.
-   - `logged_in: false` and `device_code_pending: false` → start `login_device` and show `verification_uri` + `user_code`.
-   - `logged_in: false` and `device_code_pending: true` → prompt user to finish device-code verification and keep polling `status`.
+### Find emails from John about budget and reply
 
-3. **Read TOOL_CONTRACT.md**: if you haven't already, read
-   `references/TOOL_CONTRACT.md` for the exact tool name, parameters, and
-   query syntax.
+1. `find` for mail
+2. `get_email` with `include_full: true`
+3. `get_email_thread` for full conversation context
+4. `compose_email` in `reply` mode with confirm flow
 
-4. **Try the curl call**: construct and run the curl command. If it fails:
-   - Parse the error response (`content[0].text` or `isError` field).
-   - Adjust parameters and retry.
-   - Only after 2 failed attempts with different approaches should you ask the
-     user for guidance — and include the full error response when you do.
+### Prepare for a specific meeting
 
-## Safety & Guardrails
+1. `find` events in the target time window
+2. `get_event` with `include_full: true`
+3. Additional `find` over mail/files using subject or attendee context
 
-The gateway provides its own strong guardrails. Key points (see TOOL_CONTRACT
-for full list):
+### Schedule a 30-minute Teams call
 
-- **Write operations require `confirm=true`** in their arguments. This includes:
-  - Sending mail (`compose_email` with mode `send`, `reply`, `reply_all`)
-  - Creating calendar events (`schedule_meeting`)
-  - Responding to invites (`respond_to_meeting` — accept, decline, cancel)
-- Outbound **email recipients are domain-allowlisted**.
-- Attachments have size/quantity limits.
-- HTML is sanitized.
-- An **audit log** records all write actions and blocked attempts.
+Use `schedule_meeting` with `preferred_start`, `preferred_end`,
+`duration_minutes`, and `teams_meeting: true`, then confirm.
 
-As the agent:
+### Read a found document
 
-1. Prefer **read-only operations** first (search, list, get) to gather context.
-2. For any write operation (send mail, create meeting, etc.):
-   - Clearly summarize the intended action to the user.
-   - Require an explicit user confirmation.
-   - Only then call the tool with `confirm=true`.
-3. If a write request is blocked by guardrails or allowlists, explain the error
-   and offer safer alternatives.
+1. `find` files
+2. `get_file_content` in default metadata mode first
+3. Use `download_url`, or call inline/binary mode only when needed
 
-## Tool Selection Quick Reference
+### Catch up on an email thread
 
-| User asks about...        | Tool to use          | Key params                                    |
-| ------------------------- | -------------------- | --------------------------------------------- |
-| Today's/tomorrow's schedule | `find`             | `entity_types:["events"]`, `start_date`, `end_date` |
-| Unread emails             | `find`               | `query:"isRead:false"`, `entity_types:["mail"]` |
-| Emails from someone       | `find`               | `query:"from:name topic"`, `entity_types:["mail"]` |
-| Full email body           | `get_email`          | `message_id`, `include_full:true`             |
-| Email conversation thread | `get_email_thread`   | `conversation_id` or `message_id`             |
-| Meeting details           | `get_event`          | `event_id`, `include_full:true`               |
-| Meeting prep/briefing     | `find` + `get_event` | Find meeting, get details, search related context |
-| Send/reply to email       | `compose_email`      | `mode`, `to`, `subject`, `body_html`, `confirm:true` |
-| Schedule a meeting        | `schedule_meeting`   | `subject`, `attendees`, times, `confirm:true` |
-| Accept/decline invite     | `respond_to_meeting` | `event_id`, `action`, `confirm:true`          |
-| File/doc search           | `find`               | `entity_types:["files"]`                      |
-| File details/metadata     | `get_file_metadata`  | `drive_id`, `item_id`                         |
-| Read file contents        | `get_file_content`   | `drive_id`, `item_id`, `max_chars`            |
-| Audit trail               | `audit_list`         | `limit`                                       |
+1. `find` mail
+2. `get_email` with `include_full: true` for `conversation_id`
+3. `get_email_thread`
 
-## Troubleshooting
+### Get transcript from a recent meeting
 
-If the gateway is not responding:
+1. `list_chats` with `chat_type: "meeting"`
+2. `get_chat` to obtain `join_web_url`
+3. `resolve_meeting`
+4. `list_meeting_transcripts`
+5. `get_transcript_content`
 
-1. **Check health**: `curl -s ${GRAPH_MCP_URL}/health`
-   - No response or connection refused: the gateway container may be scaled to
-     zero or stopped. Ask the platform administrator to restart it.
-   - HTTP 200 with `"status":"ok"`: the gateway is healthy.
+### Understand what was discussed in a Teams chat
 
-2. **Check auth via MCP tool**: call `auth` with `{"action":"status"}`
-   - If `logged_in` is false and no device flow is pending: call `auth` with
-     `{"action":"login_device"}` and show `verification_uri` + `user_code`
-     to the user.
-   - If `device_code_pending` is true: wait for user completion and keep polling
-     `status` until `logged_in` is true.
+1. `list_chats`
+2. `list_chat_messages`
+3. Optionally `get_chat_message` for a specific message
 
-3. **Parse error responses**: Every failed tool call returns an error in
-   `content[0].text` with a `CODE: message` format. Common codes:
-    - `AUTH_REQUIRED` / `AUTH_EXPIRED` → re-authenticate via `auth`
-    - `MULTIPLE_ACCOUNTS_IN_CACHE` → call `auth` `logout`, then login again
-    - `CACHE_DECRYPTION_FAILED` → cache/encryption mismatch; escalate to platform admin
-    - `VALIDATION_ERROR` → check parameters against TOOL_CONTRACT.md
-    - `UPSTREAM_ERROR` → Microsoft Graph API issue, retry or escalate
+### Send a message to a Teams chat
+
+1. Identify chat via `list_chats`
+2. `send_chat_message` with confirm flow
+
+### Find semantic context across SharePoint/OneDrive
+
+Use retrieval tools when the user asks for grounding context, not strict search hits:
+
+1. `retrieve_context` for one query
+2. `retrieve_context_multi` for up to 20 queries in one batch
+
+Use optional KQL/structured filters as defined in the contract.
+
+## Troubleshooting Sequence
+
+1. Verify `${GRAPH_MCP_URL}/health`
+2. Verify MCP `auth` `status`
+3. Check identity-binding fields in `status`
+4. Re-read `TOOL_CONTRACT.md` and correct params
+5. Retry with corrected args
+6. Escalate with exact error payload if still failing
+
+## Timezone Guidance
+
+Calendar behavior follows gateway `config.yaml` default timezone
+(`calendar.defaultTimezone`).
+
+When user gives ambiguous local times, resolve them against configured default.
+
+## Output and Caching Guidance
+
+- Default responses are high-signal/minimal
+- Use `include_full: true` where supported for deeper detail
+- Expect short-lived micro-cache on many `get_*` reads (30s TTL)
+- Do not assume `find`, `get_file_content`, `retrieve_context`, `retrieve_context_multi`, or `get_transcript_content` are cached
 
 ## When to Use This Skill
 
-Trigger this skill when the user asks for anything that clearly involves their
-**Microsoft 365 account**, for example:
+Use for any request involving Microsoft 365 account data:
 
-- "What meetings do I have today/tomorrow?"
-- "Show my unread emails"
-- "Find all emails from Alice about the Q4 launch"
-- "Search my OneDrive for the latest budget spreadsheet"
-- "Draft (and then send, after confirmation) an email to the leadership team"
-- "Prepare me for my 2pm meeting"
-- "Schedule a 30-min Teams call with Bob tomorrow morning"
-- "Search across mail, calendar, and files for references to project Falcon"
+- calendar/schedule/meetings
+- email search/read/reply/send
+- OneDrive/SharePoint file discovery/content
+- Teams chats and messages
+- Teams meeting transcript retrieval
 
-For generic questions that do not require live access to the user's M365
-workspace, use normal model reasoning instead of this gateway.
+For purely conceptual requests with no live M365 data need, normal reasoning is sufficient.

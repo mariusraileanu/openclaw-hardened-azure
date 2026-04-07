@@ -25,6 +25,16 @@
       "workspace": "${OPENCLAW_STATE_DIR}/workspace"
     }
   },
+  "tools": {
+    "exec": {
+      "host": "gateway"
+    },
+    "web": {
+      "search": {
+        "provider": "tavily"
+      }
+    }
+  },
   "gateway": {
     "auth": {
       "mode": "none"
@@ -39,13 +49,6 @@
             "baseUrl": "https://api.tavily.com"
           }
         }
-      }
-    }
-  },
-  "tools": {
-    "web": {
-      "search": {
-        "provider": "tavily"
       }
     }
   },
