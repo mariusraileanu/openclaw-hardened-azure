@@ -42,6 +42,7 @@ Always read and treat this file as the canonical contract before tool calls:
 
 - `workspace/skills/m365-graph-gateway/references/TOOL_CONTRACT.md`
 
+If anything in this skill conflicts with the contract, follow the contract.
 Do not guess tool names, args, or response fields.
 
 ## Startup Checklist Per Session
@@ -98,12 +99,27 @@ If binding is invalid, do not proceed with user-data operations.
 
 ## JSON-RPC Lifecycle and Transport Notes
 
-- First request should be `initialize`
-- Follow with `notifications/initialized`
+- Protocol clients must send `initialize` first and then `notifications/initialized`
 - `ping` is supported
 - Notifications return HTTP 204 (no body)
 - Batch requests are not supported
 - `/mcp` request body limit: 1 MB
+
+## Auth Recovery (Mandatory)
+
+If any tool call returns `isError: true` with `structuredContent.error_code`
+equal to `AUTH_EXPIRED` or `AUTH_REQUIRED`:
+
+1. Call `auth` with `action: "login_device"`
+2. Show `verification_uri` and `user_code` to the user
+3. Poll `auth` `status` every 5 seconds
+4. Retry the original tool call only after:
+   - `logged_in: true`
+   - `graph_reachable: true`
+   - `device_code_pending: false`
+
+Do not treat 7-day re-auth prompts as outages; this is expected Conditional
+Access behavior.
 
 ## Security and Runtime Notes
 
@@ -157,6 +173,12 @@ Pattern:
 1. Call without `confirm` to produce preview
 2. Show preview to user
 3. Re-call with `confirm: true` after explicit approval
+
+`compose_email` mode specifics:
+
+- `send` without `confirm` returns a preview
+- `reply` / `reply_all` without `confirm` creates a draft
+- `draft` always creates a draft (no `confirm` required)
 
 ## Domain Guardrails
 

@@ -138,6 +138,7 @@ curl -s -X POST ${GRAPH_MCP_URL}/mcp \
 - Write operations (send email, create meeting) require user confirmation + `confirm: true`
 - For email search, use property filters (`isRead:false`, `from:alice`) not natural language
 - If a curl call fails, parse the error, adjust, and retry before asking the user
+- If any tool call returns `AUTH_REQUIRED` or `AUTH_EXPIRED`: run `auth` `login_device`, show `verification_uri` + `user_code`, poll `auth` `status` every 5s until `logged_in:true`, `graph_reachable:true`, `device_code_pending:false`, then retry the original call.
 - For SharePoint/OneDrive files (including "summarize this deck/doc"), do not use Tavily/web extract tools. Use M365 file tools only: `find` -> `get_file_content` with `mode:"parsed"` (or `inline` for text files).
 - If you only have a SharePoint `web_url`, run `find` again to get `drive_id` and `item_id`, then call `get_file_content`.
 - Do not claim "I can't run Python" or "can't access this runtime" for M365 summary requests. If parsing fails, report the exact tool error and retry via M365 flow.
