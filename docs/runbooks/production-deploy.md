@@ -190,11 +190,16 @@ terraform -chdir=infra/user-app init \
 ## Upgrading the Base Image
 
 ```bash
-# 1. Update the FROM digest in Dockerfile.wrapper
-# 2. Build and push
+# 1. Pull and pin the target upstream image (example)
+DOCKER_CONFIG=/tmp/docker-empty docker pull ghcr.io/openclaw/openclaw:2026.4.12-beta.1
+DOCKER_CONFIG=/tmp/docker-empty docker inspect ghcr.io/openclaw/openclaw:2026.4.12-beta.1 --format '{{index .RepoDigests 0}}'
+
+# 2. Update the FROM line in Dockerfile.wrapper with tag + digest
+
+# 3. Build and push
 make build-image ENV=prod IMAGE_TAG=v2.0.0
 
-# 3. Redeploy users (updates IMAGE_REF)
+# 4. Redeploy users (updates IMAGE_REF)
 IMAGE_TAG=v2.0.0 ./platform/cli/ocp deploy user --env prod --user alice
 ```
 

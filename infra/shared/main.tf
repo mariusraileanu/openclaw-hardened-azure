@@ -828,6 +828,22 @@ resource "azurerm_monitor_diagnostic_setting" "nfs_storage" {
   }
 }
 
+# Teams relay Function App diagnostics: structured relay events + metrics
+resource "azurerm_monitor_diagnostic_setting" "relay" {
+  count                      = var.msteams_relay_enabled ? 1 : 0
+  name                       = "diag-relay-to-law"
+  target_resource_id         = azurerm_linux_function_app.relay[0].id
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.shared.id
+
+  enabled_log {
+    category_group = "allLogs"
+  }
+
+  enabled_metric {
+    category = "AllMetrics"
+  }
+}
+
 # ===========================================================================
 # Signal-CLI Daemon (shared messaging relay)
 # ===========================================================================

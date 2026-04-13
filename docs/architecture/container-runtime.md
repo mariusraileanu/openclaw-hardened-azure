@@ -9,7 +9,8 @@ How the OpenClaw container boots, routes traffic, and manages per-user state.
 ```
 FROM ghcr.io/openclaw/openclaw:<version>
 
-RUN apt-get install -y nano gettext-base
+RUN apt-get install -y nano gettext-base sqlite3
+RUN npm install -g @tobilu/qmd
 
 COPY config/openclaw.json.template  /app/config/
 COPY scripts/build-openclaw-config.py /app/scripts/
@@ -23,6 +24,7 @@ ENTRYPOINT ["/app/entrypoint.sh"]
 - Runs as non-root (UID 1000)
 - No secrets baked in -- everything injected via environment variables at runtime
 - `gettext-base` provides `envsubst` for template resolution
+- `qmd` is installed in-image for local-first memory backend support
 
 ## Loopback Proxy (`loopback-proxy.mjs`)
 
@@ -84,11 +86,16 @@ The NFS share is mounted into the Container Apps Environment as `NfsAzureFile` t
 ## Upgrading
 
 ```bash
-# 1. Update the FROM line in Dockerfile.wrapper
-# 2. Build and push (make-only target, no ocp equivalent)
+# 1. Pull and pin the upstream image digest (example)
+DOCKER_CONFIG=/tmp/docker-empty docker pull ghcr.io/openclaw/openclaw:2026.4.12-beta.1
+DOCKER_CONFIG=/tmp/docker-empty docker inspect ghcr.io/openclaw/openclaw:2026.4.12-beta.1 --format '{{index .RepoDigests 0}}'
+
+# 2. Update the FROM line in Dockerfile.wrapper with tag + digest
+
+# 3. Build and push (make-only target, no ocp equivalent)
 make build-image ENV=prod IMAGE_TAG=v2.0.0
 
-# 3. Redeploy each user
+# 4. Redeploy each user
 IMAGE_TAG=v2.0.0 ./platform/cli/ocp deploy user --env prod --user alice
 ```
 

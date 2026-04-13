@@ -27,6 +27,8 @@ Use `ocp` as the primary interface. `make` remains a compatibility alias layer. 
 | Apply shared infra | `./platform/cli/ocp deploy shared --env dev` | `make deploy ENV=dev` |
 | Deploy user app | `./platform/cli/ocp deploy user --env dev --user alice` | `make add-user ENV=dev U=alice` |
 | Remove user app | `./platform/cli/ocp user remove --env dev --user alice` | `make remove-user ENV=dev U=alice` |
+| Request-level usage (relay logs) | `./platform/cli/ocp usage --env prod --hours 24` | — |
+| Message usage table (48h/7d/14d/30d) | `./platform/cli/ocp usage --env prod --source sessions` | — |
 | Signal deploy | `./platform/cli/ocp signal deploy --env dev` | `make signal-deploy ENV=dev` |
 | Check Graph auth identity | `./platform/cli/ocp graph auth-check --env prod --user alice --user bob` | — |
 | Reset platform | `./platform/cli/ocp reset --env dev --nuke-only` | `make nuke-all ENV=dev` |

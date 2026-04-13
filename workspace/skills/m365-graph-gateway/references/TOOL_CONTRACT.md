@@ -524,6 +524,7 @@ Search across Microsoft 365 — mail, files, and calendar events.
 | `entity_types` | string[] | no       | Filter to specific types: `"mail"`, `"files"`, `"events"`. Default: all three.                                    |
 | `start_date`   | string   | no       | ISO 8601 datetime for date-range event queries. Example: `"2026-02-23T00:00:00"`                                  |
 | `end_date`     | string   | no       | ISO 8601 datetime. Required alongside `start_date`. Example: `"2026-02-24T00:00:00"`                              |
+| `mailbox_user` | string   | no       | Target mailbox/calendar identity (UPN/email/object-id). Uses `/users/{mailbox_user}` instead of `/me`.            |
 | `top`          | integer  | no       | Max results (1-50, default 10)                                                                                    |
 | `max_chars`    | integer  | no       | Max output chars (1-50000, default from config)                                                                   |
 
@@ -547,6 +548,8 @@ There are two modes for event search, selected automatically:
 - Good for queries like "find the Q4 planning meeting" or "meetings with John"
 - Results may span all time periods; no date filtering
 - Provider: `"graph-search"`
+
+When `mailbox_user` is provided for event queries, `start_date` + `end_date` are required.
 
 #### File search behavior
 
@@ -583,6 +586,36 @@ Uses Graph Search API.
     "query": "budget report from finance",
     "entity_types": ["mail"],
     "top": 5
+  }
+}
+```
+
+**Example** — search shared mailbox emails:
+
+```json
+{
+  "name": "find",
+  "arguments": {
+    "query": "budget report from finance",
+    "entity_types": ["mail"],
+    "mailbox_user": "shared-mailbox@contoso.com",
+    "top": 5
+  }
+}
+```
+
+**Example** — search shared calendar events in date range:
+
+```json
+{
+  "name": "find",
+  "arguments": {
+    "query": "meetings",
+    "entity_types": ["events"],
+    "mailbox_user": "shared-calendar@contoso.com",
+    "start_date": "2026-02-23T00:00:00",
+    "end_date": "2026-02-24T00:00:00",
+    "top": 10
   }
 }
 ```
@@ -688,11 +721,25 @@ Fetch a specific email by ID. Use after `find` to retrieve full details.
 | -------------- | ------- | -------- | -------------------------------------------------------------------- |
 | `message_id`   | string  | yes      | Email ID from `find` results                                         |
 | `include_full` | boolean | no       | `true` for expanded fields (body, all recipients). Default: minimal. |
+| `mailbox_user` | string  | no       | Target mailbox (UPN/email/object-id) for shared mailbox reads.       |
 
 **Example**:
 
 ```json
 { "name": "get_email", "arguments": { "message_id": "AAMk...", "include_full": true } }
+```
+
+**Example** — get email from shared mailbox:
+
+```json
+{
+  "name": "get_email",
+  "arguments": {
+    "message_id": "AAMk...",
+    "include_full": true,
+    "mailbox_user": "shared-mailbox@contoso.com"
+  }
+}
 ```
 
 **Response** (minimal):
@@ -739,11 +786,25 @@ Fetch a specific calendar event by ID. Use after `find` to retrieve full details
 | -------------- | ------- | -------- | -------------------------------------------------------------------------------------- |
 | `event_id`     | string  | yes      | Event ID from `find` results                                                           |
 | `include_full` | boolean | no       | `true` for full attendee list, body preview, online meeting details. Default: minimal. |
+| `mailbox_user` | string  | no       | Target calendar owner (UPN/email/object-id) for shared calendar reads.                 |
 
 **Example**:
 
 ```json
 { "name": "get_event", "arguments": { "event_id": "AAMk...", "include_full": true } }
+```
+
+**Example** — get event from shared calendar:
+
+```json
+{
+  "name": "get_event",
+  "arguments": {
+    "event_id": "AAMk...",
+    "include_full": true,
+    "mailbox_user": "shared-calendar@contoso.com"
+  }
+}
 ```
 
 **Response** (full):
@@ -778,6 +839,7 @@ oldest-first.
 | ----------------- | ------- | ---------------- | ----------------------------------------------------------------------- |
 | `conversation_id` | string  | one of the two*  | Conversation ID (from `get_email` response when `include_full=true`)    |
 | `message_id`      | string  | one of the two*  | Message ID — the tool fetches the message to resolve its conversationId |
+| `mailbox_user`    | string  | no               | Target mailbox (UPN/email/object-id) for shared thread reads.           |
 | `top`             | integer | no               | Max messages to return (1-50, default 10)                               |
 | `include_full`    | boolean | no               | `true` for expanded fields (body, all recipients). Default: minimal.    |
 
@@ -798,6 +860,19 @@ oldest-first.
 {
   "name": "get_email_thread",
   "arguments": { "message_id": "AAMk...", "top": 20 }
+}
+```
+
+**Example** — get thread from shared mailbox:
+
+```json
+{
+  "name": "get_email_thread",
+  "arguments": {
+    "message_id": "AAMk...",
+    "mailbox_user": "shared-mailbox@contoso.com",
+    "top": 20
+  }
 }
 ```
 
@@ -1088,6 +1163,7 @@ Compose an email: draft, send, reply, or reply-all. Write operations require `co
 | `attachments`     | object[]           | no                  | Inline attachments: `{ name, content_base64, content_type }`                                             |
 | `attachment_refs` | object[]           | no                  | M365 file references: `{ drive_id, item_id, name }`                                                      |
 | `confirm`         | boolean            | no                  | `true` to execute send/reply. Without it, `send` returns a preview; `reply`/`reply_all` creates a draft. |
+| `mailbox_user`    | string             | no                  | Target mailbox (UPN/email/object-id). Uses `/users/{mailbox_user}` for draft/send/reply flows.           |
 
 #### Attachment limits
 
@@ -1125,6 +1201,22 @@ Compose an email: draft, send, reply, or reply-all. Write operations require `co
 }
 ```
 
+**Example** — send from shared mailbox:
+
+```json
+{
+  "name": "compose_email",
+  "arguments": {
+    "mode": "send",
+    "to": ["bob@contoso.com"],
+    "subject": "Update",
+    "body_html": "<p>Sent from a shared mailbox.</p>",
+    "mailbox_user": "shared-mailbox@contoso.com",
+    "confirm": true
+  }
+}
+```
+
 > **Guardrail**: for `draft` and `send` modes, all recipient addresses in `to`
 > are checked against the [Domain Allowlist](#domain-allowlist). If any domain
 > is not permitted, the tool returns `FORBIDDEN` before creating the draft or
@@ -1138,6 +1230,10 @@ Compose an email: draft, send, reply, or reply-all. Write operations require `co
 > - `reply`/`reply_all` without `confirm` — creates a draft in the user's mailbox
 > - `reply`/`reply_all` with `confirm: true` — sends the reply immediately
 > - `draft` — always creates a draft (no `confirm` needed)
+>
+> **Shared mailbox behavior**: when `mailbox_user` is set, all compose/reply
+> operations run against `/users/{mailbox_user}`. The signed-in user must have
+> delegate access to that mailbox and the app must include shared mail scopes.
 
 ---
 
@@ -1160,6 +1256,7 @@ finding. Supports Teams meetings and agendas. Requires `confirm=true`.
 | `teams_meeting`    | boolean  | no       | `true` to create a Teams meeting with join link                                                                        |
 | `body_html`        | string   | no       | Custom HTML body (overrides agenda)                                                                                    |
 | `confirm`          | boolean  | no       | `true` to create. Without it, returns a preview.                                                                       |
+| `mailbox_user`     | string   | no       | Target calendar owner (UPN/email/object-id). Uses `/users/{mailbox_user}` for schedule/create operations.            |
 
 *Provide either `start` + `end` OR `preferred_start` + `preferred_end`.
 
@@ -1182,9 +1279,28 @@ finding. Supports Teams meetings and agendas. Requires `confirm=true`.
 }
 ```
 
+**Example** — schedule in a shared calendar:
+
+```json
+{
+  "name": "schedule_meeting",
+  "arguments": {
+    "subject": "Shared Calendar Sync",
+    "attendees": ["bob@contoso.com"],
+    "start": "2026-02-23T09:00:00-05:00",
+    "end": "2026-02-23T09:30:00-05:00",
+    "mailbox_user": "shared-calendar@contoso.com",
+    "confirm": true
+  }
+}
+```
+
 > **Guardrail**: all attendee addresses are checked against the
 > [Domain Allowlist](#domain-allowlist). If any domain is not permitted, the
 > tool returns `FORBIDDEN` before creating the meeting.
+>
+> **Shared calendar behavior**: when `mailbox_user` is set, scheduling and
+> free/busy lookup use `/users/{mailbox_user}`.
 
 ---
 
@@ -1193,13 +1309,14 @@ finding. Supports Teams meetings and agendas. Requires `confirm=true`.
 Respond to a meeting invitation or cancel a meeting you organized. Requires
 `confirm=true` for accept/decline/cancel.
 
-| Parameter   | Type    | Required | Description                                                                     |
-| ----------- | ------- | -------- | ------------------------------------------------------------------------------- |
-| `event_id`  | string  | yes      | Event ID                                                                        |
-| `action`    | enum    | yes      | `"accept"`, `"decline"`, `"tentativelyAccept"`, `"cancel"`, `"reply_all_draft"` |
-| `comment`   | string  | no       | Optional comment with response (e.g. "I'll be 5 min late")                      |
-| `body_html` | string  | no       | HTML body for `reply_all_draft` mode                                            |
-| `confirm`   | boolean | no       | `true` to execute accept/decline/cancel. Not needed for `reply_all_draft`.      |
+| Parameter      | Type    | Required | Description                                                                             |
+| -------------- | ------- | -------- | --------------------------------------------------------------------------------------- |
+| `event_id`     | string  | yes      | Event ID                                                                                |
+| `action`       | enum    | yes      | `"accept"`, `"decline"`, `"tentativelyAccept"`, `"cancel"`, `"reply_all_draft"`         |
+| `comment`      | string  | no       | Optional comment with response (e.g. "I'll be 5 min late")                              |
+| `body_html`    | string  | no       | HTML body for `reply_all_draft` mode                                                    |
+| `confirm`      | boolean | no       | `true` to execute accept/decline/cancel. Not needed for `reply_all_draft`.              |
+| `mailbox_user` | string  | no       | Target calendar/mailbox owner (UPN/email/object-id) for shared RSVP/cancel/reply flows. |
 
 **Example** — accept a meeting:
 
@@ -1210,6 +1327,20 @@ Respond to a meeting invitation or cancel a meeting you organized. Requires
     "event_id": "AAMk...",
     "action": "accept",
     "comment": "Looking forward to it",
+    "confirm": true
+  }
+}
+```
+
+**Example** — accept from shared calendar context:
+
+```json
+{
+  "name": "respond_to_meeting",
+  "arguments": {
+    "event_id": "AAMk...",
+    "action": "accept",
+    "mailbox_user": "shared-calendar@contoso.com",
     "confirm": true
   }
 }
@@ -1227,6 +1358,9 @@ Respond to a meeting invitation or cancel a meeting you organized. Requires
   }
 }
 ```
+
+When `mailbox_user` is set, RSVP/cancel/reply-all-draft operations target
+`/users/{mailbox_user}`.
 
 ---
 
@@ -1876,11 +2010,15 @@ All scopes are **delegated user auth** — not application-only.
 | Scope                              | Tools                                                                                                 |
 | ---------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `Mail.Read`                        | `find` (mail), `get_email`, `get_email_thread`                                                        |
+| `Mail.Read.Shared`                 | `find` (mail with `mailbox_user`), `get_email`/`get_email_thread` with `mailbox_user`                 |
 | `Mail.ReadWrite`                   | `compose_email` (draft)                                                                               |
+| `Mail.ReadWrite.Shared`            | `compose_email` (draft/reply in shared mailbox with `mailbox_user`)                                   |
 | `Mail.Send`                        | `compose_email` (send, reply, reply_all)                                                              |
+| `Mail.Send.Shared`                 | `compose_email` (send/reply/reply_all in shared mailbox with `mailbox_user`)                          |
 | `Calendars.Read`                   | `find` (events), `get_event`                                                                          |
 | `Calendars.Read.Shared`            | `find` (events from shared calendars)                                                                 |
 | `Calendars.ReadWrite`              | `schedule_meeting`, `respond_to_meeting`                                                              |
+| `Calendars.ReadWrite.Shared`       | `schedule_meeting` / `respond_to_meeting` with `mailbox_user`                                         |
 | `User.Read`                        | `auth` (whoami, status)                                                                               |
 | `Files.Read.All`                   | `find` (files), `get_file_metadata`, `get_file_content`, `retrieve_context`, `retrieve_context_multi` |
 | `Sites.Read.All`                   | `find` (files on SharePoint), `retrieve_context`, `retrieve_context_multi`                            |

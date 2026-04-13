@@ -6,13 +6,15 @@
 #   docker manifest inspect ghcr.io/openclaw/openclaw:latest
 #   docker inspect ghcr.io/openclaw/openclaw:latest --format='{{index .RepoDigests 0}}'
 
-FROM ghcr.io/openclaw/openclaw:2026.4.2
+FROM ghcr.io/openclaw/openclaw:2026.4.12@sha256:f02011ba4189761750f6e78c563999ba64ac73a6d0ccdd72cc6d0856cbe2c414
 
 USER root
 
-# Install nano editor for in-container config editing, and gettext-base for envsubst
-# (envsubst resolves ${VAR} placeholders in openclaw.json.template at first boot)
-RUN apt-get update && apt-get install -y --no-install-recommends nano gettext-base && rm -rf /var/lib/apt/lists/*
+# Install nano for troubleshooting, gettext-base for envsubst, sqlite3 for local QMD,
+# and qmd binary for qmd memory backend.
+RUN apt-get update && apt-get install -y --no-install-recommends nano gettext-base sqlite3 && \
+    npm install -g @tobilu/qmd && \
+    rm -rf /var/lib/apt/lists/*
 
 # Create directories for config and persistent data
 RUN mkdir -p /app/config /app/data/.openclaw && \

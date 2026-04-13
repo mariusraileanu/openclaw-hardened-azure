@@ -40,8 +40,76 @@
       "mode": "none"
     }
   },
+  "memory": {
+    "backend": "qmd",
+    "qmd": {
+      "command": "/usr/local/bin/qmd",
+      "searchMode": "search",
+      "sessions": {
+        "enabled": true
+      },
+      "limits": {
+        "timeoutMs": 300000
+      },
+      "update": {
+        "embedTimeoutMs": 300000,
+        "updateTimeoutMs": 300000,
+        "commandTimeoutMs": 300000
+      }
+    }
+  },
   "plugins": {
     "entries": {
+      "active-memory": {
+        "enabled": true,
+        "config": {
+          "enabled": true,
+          "agents": ["main"],
+          "allowedChatTypes": ["direct"],
+          "queryMode": "message",
+          "promptStyle": "balanced",
+          "timeoutMs": 5000,
+          "maxSummaryChars": 220,
+          "persistTranscripts": false,
+          "logging": true
+        }
+      },
+      "memory-wiki": {
+        "enabled": true,
+        "config": {
+          "vaultMode": "bridge",
+          "bridge": {
+            "enabled": true,
+            "readMemoryArtifacts": true,
+            "indexDreamReports": true,
+            "indexDailyNotes": true,
+            "indexMemoryRoot": true,
+            "followMemoryEvents": true
+          },
+          "search": {
+            "backend": "shared",
+            "corpus": "all"
+          },
+          "context": {
+            "includeCompiledDigestPrompt": false
+          },
+          "render": {
+            "preserveHumanBlocks": true,
+            "createBacklinks": true,
+            "createDashboards": true
+          }
+        }
+      },
+      "memory-core": {
+        "enabled": true,
+        "config": {
+          "dreaming": {
+            "enabled": true,
+            "timezone": "Asia/Dubai",
+            "frequency": "0 3 * * *"
+          }
+        }
+      },
       "tavily": {
         "enabled": true,
         "config": {

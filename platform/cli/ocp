@@ -16,7 +16,7 @@ from config_ops import bootstrap_config
 from deploy_ops import deploy_shared, deploy_user, import_user, remove_user
 from doctor_ops import doctor
 from graph_gateway_ops import graph_auth_check
-from observability_ops import logs, status
+from observability_ops import logs, status, usage, usage_sessions
 from reset_ops import reset
 from signal_ops import (
     signal_build,
@@ -120,6 +120,26 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 def cmd_logs(args: argparse.Namespace) -> int:
     return _run_op(logs, REPO_ROOT, args.env, args.user)
+
+
+def cmd_usage(args: argparse.Namespace) -> int:
+    if args.source == "sessions":
+        return _run_op(
+            usage_sessions,
+            REPO_ROOT,
+            args.env,
+            args.user,
+            args.probe_user,
+        )
+
+    return _run_op(
+        usage,
+        REPO_ROOT,
+        args.env,
+        args.user,
+        args.hours,
+        args.workspace_id,
+    )
 
 
 def cmd_reset(args: argparse.Namespace) -> int:
@@ -274,6 +294,30 @@ def build_parser() -> argparse.ArgumentParser:
     logs_parser.add_argument("--env", default="dev")
     logs_parser.add_argument("--user", required=True)
     logs_parser.set_defaults(func=cmd_logs)
+
+    usage_parser = subparsers.add_parser(
+        "usage", help="Show request-level usage by user"
+    )
+    usage_parser.add_argument("--env", default="dev")
+    usage_parser.add_argument("--user")
+    usage_parser.add_argument(
+        "--hours", type=int, default=24, help="Lookback window in hours"
+    )
+    usage_parser.add_argument(
+        "--workspace-id",
+        help="Log Analytics workspace customerId (auto-resolved by default)",
+    )
+    usage_parser.add_argument(
+        "--source",
+        choices=["log-analytics", "sessions"],
+        default="log-analytics",
+        help="Data source: relay logs (log-analytics) or session history files (sessions)",
+    )
+    usage_parser.add_argument(
+        "--probe-user",
+        help="When source=sessions, run extraction from this user's container app",
+    )
+    usage_parser.set_defaults(func=cmd_usage)
 
     reset_parser = subparsers.add_parser("reset", help="Platform reset operations")
     reset_parser.add_argument("--env", default="dev")
