@@ -26,6 +26,9 @@ RUN ln -sf /app/openclaw.mjs /usr/local/bin/openclaw
 # Copy enterprise baseline configuration, workspace template, proxy, and entrypoint
 COPY config/openclaw.json.template /app/config/openclaw.json.template
 COPY config/boards/ /app/config/boards/
+COPY config/features/ /app/config/features/
+COPY config/member-evidence/ /app/config/member-evidence/
+COPY kb/ /app/kb/
 COPY scripts/build-openclaw-config.py /app/scripts/build-openclaw-config.py
 COPY scripts/feature_config.py /app/scripts/feature_config.py
 COPY scripts/member-evidence.mjs /app/scripts/member-evidence.mjs
