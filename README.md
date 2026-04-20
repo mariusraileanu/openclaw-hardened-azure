@@ -181,11 +181,33 @@ Rollback: `IMAGE_TAG=v1.0.0 ./platform/cli/ocp deploy user --env prod --user ali
 ```bash
 export COMPASS_API_KEY="sk-local-test"
 export GRAPH_MCP_URL="http://host.docker.internal:5000"
+export OPENCLAW_BOARDS="fertility,strategic-health"
 
 make docker-up        # Build and start on http://localhost:18789
 docker compose logs -f
 make docker-down      # Stop and remove volumes
 ```
+
+Board mode notes:
+
+- Board workspaces and base board-routing rules are refreshed on every boot.
+- Per-user feature manifests are the primary source of truth for enabled boards.
+- `OPENCLAW_BOARDS` is still supported as a local fallback when no explicit board list is present in features.
+- For local Docker runs without a user feature manifest, set `OPENCLAW_BOARDS` explicitly, for example `fertility,strategic-health`.
+- The base `.openclaw/workspace` remains the default user-facing workspace; board chairmen and members are additional agents the user can explicitly invoke.
+- Formal "convene the board" requests in Control UI now route through the deterministic board-meeting runner, so the chairman returns packets based on named member-agent participation instead of free-form simulation.
+- If a user asks for a formal board decision without naming a board, the base assistant should ask: `Which board?`
+
+Per-user capability policy:
+
+- Use `config/users/<slug>.features.json` to control non-secret per-user capabilities.
+- Feature manifests can select:
+  - enabled boards
+  - allowed skills for base workspace, chairman, and members
+  - enabled/disabled plugins
+- `profiles` are supported and load reusable overlays from `config/features/profiles/*.json`.
+- Keep secrets and channel credentials in `config/users/<slug>.env`.
+- The deploy/runtime path can inject the merged per-user feature manifest via `OPENCLAW_FEATURES_JSON` without rebuilding the image.
 
 ## Security Model
 
@@ -241,6 +263,7 @@ make docker-down      # Stop and remove volumes
 | Agent responds "Connection error." | Check `COMPASS_BASE_URL`; tail logs for `Patched Compass provider`. |
 | `signal-cli spawn error: EACCES` | Harmless. Signal messages flow through the HTTP proxy. |
 | Agent ignores MCP tools | Three-layer check: (1) Compass `baseUrl`, (2) `GRAPH_MCP_URL` resolved in workspace files, (3) gateway health. |
+| Board mode did not render agents | Check the effective feature manifest for the user first. For local fallback mode, verify `OPENCLAW_BOARDS` is set and `config/boards/<board>.json` exists; then rebuild or restart the container. |
 | Rebuilt image but old code runs | Force new revision: `az containerapp update --image <ref> --revision-suffix "$(date +%s)"`. |
 
 ## File Structure

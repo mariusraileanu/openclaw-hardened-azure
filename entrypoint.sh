@@ -44,6 +44,31 @@ if [[ ! -d "${OPENCLAW_STATE_DIR}/workspace" ]]; then
   cp -r /app/config/workspace "${OPENCLAW_STATE_DIR}/workspace"
 fi
 
+echo "Refreshing board workspaces and base board-routing rules ..."
+/app/scripts/render-agent-workspaces.py
+
+if [[ -d "/app/extensions-local/board-router" ]]; then
+  # Remove any stale installed copy so `plugins install` can overwrite cleanly.
+  # The data volume persists across container restarts; without this, the
+  # install command errors with "plugin already exists".
+  rm -rf "${OPENCLAW_STATE_DIR}/extensions/board-router"
+  echo "Installing local board-router plugin ..."
+  openclaw plugins install /app/extensions-local/board-router || {
+    echo "FATAL: failed to install board-router plugin" >&2
+    exit 1
+  }
+fi
+
+# Copy dynamically-generated skills into /app/skills/ (the built-in skills
+# directory probed first by the runtime) so it finds them without falling back
+# to the workspace copy.  Use cp instead of ln -s because the runtime rejects
+# symlinks that escape the skills root directory.
+BOARD_ROUTING_SKILL="${OPENCLAW_STATE_DIR}/workspace/skills/board-routing/SKILL.md"
+if [[ -f "${BOARD_ROUTING_SKILL}" ]]; then
+  mkdir -p /app/skills/board-routing
+  cp "${BOARD_ROUTING_SKILL}" /app/skills/board-routing/SKILL.md
+fi
+
 # Always resolve env var placeholders in skill docs on every boot.
 # This ensures GRAPH_MCP_URL changes propagate to existing workspaces
 # (same pattern as the Compass baseUrl and Signal httpUrl patching above).
@@ -71,13 +96,14 @@ if [[ -f "${SOURCE_CONTRACT}" ]]; then
 fi
 
 # Always resolve env var placeholders in AGENTS.md on every boot.
-# AGENTS.md is loaded on every request and contains ${GRAPH_MCP_URL} placeholders
-# for the M365 gateway instructions.
+# AGENTS.md is loaded on every request and contains ${GRAPH_MPC_URL} placeholders
+# for the M365 gateway instructions.  Use the *rendered* file (not the image
+# source) so that content appended by render-agent-workspaces.py (e.g. the
+# Board Access section) is preserved.
 AGENTS_FILE="${OPENCLAW_STATE_DIR}/workspace/AGENTS.md"
-SOURCE_AGENTS="/app/config/workspace/AGENTS.md"
-if [[ -n "${GRAPH_MCP_URL:-}" ]] && [[ -f "${SOURCE_AGENTS}" ]]; then
+if [[ -n "${GRAPH_MCP_URL:-}" ]] && [[ -f "${AGENTS_FILE}" ]]; then
   echo "Resolving GRAPH_MCP_URL in AGENTS.md ..."
-  envsubst '${GRAPH_MCP_URL}' < "${SOURCE_AGENTS}" > "${AGENTS_FILE}.tmp" \
+  envsubst '${GRAPH_MCP_URL}' < "${AGENTS_FILE}" > "${AGENTS_FILE}.tmp" \
     && mv "${AGENTS_FILE}.tmp" "${AGENTS_FILE}"
 fi
 
@@ -128,6 +154,42 @@ chmod 644 /etc/profile.d/openclaw.sh
   echo "export OPENCLAW_STATE_DIR=\"${OPENCLAW_STATE_DIR}\""
   echo "export OPENCLAW_GATEWAY_TOKEN=\"${OPENCLAW_GATEWAY_TOKEN}\""
 } >> "${HOME}/.bashrc" 2>/dev/null || true
+
+# Pre-seed the main webchat session so the Control UI shows it even when
+# heartbeat.isolatedSession is true.  The heartbeat gets its own session
+# (agent:main:main:heartbeat) and the Control UI has no "New Chat" button,
+# so without this seed the user only sees the heartbeat conversation.
+SESSIONS_DIR="${OPENCLAW_STATE_DIR}/agents/main/sessions"
+SESSIONS_JSON="${SESSIONS_DIR}/sessions.json"
+_need_seed=false
+if [[ ! -f "${SESSIONS_JSON}" ]]; then
+  _need_seed=true
+elif ! python3 -c "import json,sys; d=json.load(open(sys.argv[1])); exit(0 if 'agent:main:main' in d else 1)" "${SESSIONS_JSON}" 2>/dev/null; then
+  _need_seed=true
+fi
+if [[ "${_need_seed}" == "true" ]]; then
+  echo "Seeding main webchat session ..."
+  mkdir -p "${SESSIONS_DIR}"
+  python3 -c "
+import json, os, sys, time, uuid
+sessions_json = sys.argv[1]
+data = {}
+if os.path.exists(sessions_json):
+    with open(sessions_json) as f:
+        data = json.load(f)
+sid = str(uuid.uuid4())
+data['agent:main:main'] = {
+    'sessionId': sid,
+    'updatedAt': int(time.time() * 1000),
+    'chatType': 'direct'
+}
+with open(sessions_json, 'w') as f:
+    json.dump(data, f, indent=2)
+# Create empty session history file
+open(os.path.join(os.path.dirname(sessions_json), sid + '.jsonl'), 'a').close()
+print(f'Seeded session {sid}')
+" "${SESSIONS_JSON}"
+fi
 
 if [ $# -eq 0 ]; then
   # Run the HTTP reverse proxy on 0.0.0.0:18789 (the ingress target port).

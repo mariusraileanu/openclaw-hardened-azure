@@ -13,7 +13,9 @@ RUN apt-get install -y nano gettext-base sqlite3
 RUN npm install -g @tobilu/qmd
 
 COPY config/openclaw.json.template  /app/config/
+COPY config/boards/                 /app/config/boards/
 COPY scripts/build-openclaw-config.py /app/scripts/
+COPY scripts/render-agent-workspaces.py /app/scripts/
 COPY workspace/                     /app/config/workspace/
 COPY loopback-proxy.mjs             /app/
 COPY entrypoint.sh                  /app/
@@ -57,13 +59,15 @@ When the container starts with no arguments:
 
 4. **Workspace template copy** -- On first boot, copies the baked-in workspace (skills, tools, identity docs) from the image to the NFS volume. Subsequent boots skip this (workspace persists on NFS).
 
-5. **Template resolution** -- Re-runs `envsubst` on `AGENTS.md` and `SKILL.md` on every boot to resolve `${GRAPH_MCP_URL}` placeholders. This ensures URL changes propagate without rebuilding the image.
+5. **Board workspace rendering** -- When board features are enabled, `scripts/render-agent-workspaces.py` materializes per-board chairman/member workspaces under `.openclaw/workspaces/<board>/...` from `config/boards/*.json`, and also refreshes the base workspace with board-routing instructions. The base workspace remains the default entry point.
 
-6. **Legacy cleanup** -- Removes obsolete `workspace/instructions/` directory and legacy `tavily-search` skill folder from NFS.
+6. **Template resolution** -- Re-runs `envsubst` on `AGENTS.md` and `SKILL.md` on every boot to resolve `${GRAPH_MCP_URL}` placeholders. This ensures URL changes propagate without rebuilding the image.
 
-7. **Environment bridging** -- Exports `OPENCLAW_GATEWAY_TOKEN` from `OPENCLAW_GATEWAY_AUTH_TOKEN` and writes vars to `/etc/profile.d/` and `~/.bashrc` for interactive `exec` shells.
+7. **Legacy cleanup** -- Removes obsolete `workspace/instructions/` directory and legacy `tavily-search` skill folder from NFS.
 
-8. **Start services** -- Launches `loopback-proxy.mjs` in background, then `exec`s `openclaw gateway --allow-unconfigured --bind loopback --port 18790`.
+8. **Environment bridging** -- Exports `OPENCLAW_GATEWAY_TOKEN` from `OPENCLAW_GATEWAY_AUTH_TOKEN` and writes vars to `/etc/profile.d/` and `~/.bashrc` for interactive `exec` shells.
+
+9. **Start services** -- Launches `loopback-proxy.mjs` in background, then `exec`s `openclaw gateway --allow-unconfigured --bind loopback --port 18790`.
 
 ## NFS Volume
 
@@ -75,6 +79,7 @@ Each user's state lives on a shared NFS volume:
     .openclaw/
       openclaw.json          # Runtime config (built on every boot)
       workspace/             # Skills, identity docs, agent instructions
+      workspaces/            # Generated board workspaces (when boards are enabled)
       sessions/              # Conversation state
   bob/
     .openclaw/

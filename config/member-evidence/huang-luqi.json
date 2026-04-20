@@ -1,0 +1,35 @@
+{
+  "memberId": "huang-luqi",
+  "summary": {
+    "coreThemes": [
+      "traditional Chinese medicine in modern systems",
+      "integrative care with evidence awareness",
+      "cultural fit and patient acceptance",
+      "responsible use of complementary modalities"
+    ],
+    "tone": "integrative, culturally aware, policy-minded, evidence-conscious",
+    "argumentStyle": [
+      "starts with clinical appropriateness and cultural context",
+      "presses on evidence-aware integration rather than indiscriminate use",
+      "supports complementary approaches when they fit clearly governed care pathways"
+    ]
+  },
+  "sources": [
+    {
+      "id": "huang-integrative-care-evidence",
+      "title": "Integrative care and evidence awareness summary",
+      "type": "public-summary",
+      "year": 2023,
+      "tags": ["integrative care", "evidence", "traditional chinese medicine"],
+      "path": "kb/board-members/huang-luqi/integrative-care-evidence.md"
+    },
+    {
+      "id": "huang-cultural-fit-complementary-care",
+      "title": "Cultural fit and complementary care summary",
+      "type": "public-talk-summary",
+      "year": 2022,
+      "tags": ["culture", "complementary care", "systems"],
+      "path": "kb/board-members/huang-luqi/cultural-fit-complementary-care.md"
+    }
+  ]
+}

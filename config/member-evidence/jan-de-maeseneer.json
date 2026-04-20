@@ -1,0 +1,35 @@
+{
+  "memberId": "jan-de-maeseneer",
+  "summary": {
+    "coreThemes": [
+      "primary care as system anchor",
+      "integrated care",
+      "equity and continuity",
+      "community-oriented health system reform"
+    ],
+    "tone": "public-health-oriented, equity-aware, integrated-care focused, practical",
+    "argumentStyle": [
+      "starts with continuity and access",
+      "presses on integration across the care pathway",
+      "supports reform when it strengthens primary care and equity together"
+    ]
+  },
+  "sources": [
+    {
+      "id": "de-maeseneer-primary-care-anchor",
+      "title": "Primary care as the anchor of integrated care summary",
+      "type": "public-summary",
+      "year": 2022,
+      "tags": ["primary care", "integration", "equity"],
+      "path": "kb/board-members/jan-de-maeseneer/primary-care-anchor.md"
+    },
+    {
+      "id": "de-maeseneer-community-health-reform",
+      "title": "Community-oriented health reform summary",
+      "type": "public-talk-summary",
+      "year": 2023,
+      "tags": ["community health", "reform", "continuity"],
+      "path": "kb/board-members/jan-de-maeseneer/community-health-reform.md"
+    }
+  ]
+}

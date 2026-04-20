@@ -6,14 +6,18 @@ import os
 import sys
 from pathlib import Path
 
+from feature_config import (
+    feature_boards_or_env,
+    load_feature_config,
+    plugins_explicitly_configured,
+)
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
 
 def env_flag(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
-
-
-def env_csv(name: str) -> list[str]:
-    raw = os.environ.get(name, "")
-    return [item.strip() for item in raw.split(",") if item.strip()]
 
 
 def fatal(message: str) -> None:
@@ -30,6 +34,78 @@ def ensure_path(obj: dict, keys: list[str]) -> dict:
             current[key] = value
         current = value
     return current
+
+
+def env_csv(name: str) -> list[str]:
+    raw = os.environ.get(name, "")
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def resolve_default_path(env_name: str, deployed_path: str, repo_relative: str) -> Path:
+    explicit = os.environ.get(env_name, "").strip()
+    if explicit:
+        return Path(explicit)
+
+    deployed = Path(deployed_path)
+    if deployed.exists():
+        return deployed
+
+    return REPO_ROOT / repo_relative
+
+
+def read_json(path: Path) -> dict:
+    with path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def build_board_agents(
+    state_dir: str, board_dir: Path, board_ids: list[str]
+) -> tuple[list[dict], list[str]]:
+    agents: list[dict] = []
+    allow: list[str] = []
+
+    for board_id in board_ids:
+        board_path = board_dir / f"{board_id}.json"
+        if not board_path.exists():
+            fatal(f"Board definition not found: {board_path}")
+
+        board = read_json(board_path)
+        board_slug = board.get("id", board_id)
+
+        chairman_agent_id = f"{board_slug}-chairman"
+        agents.append(
+            {
+                "id": chairman_agent_id,
+                "name": board["chairman"]["name"],
+                "workspace": f"{state_dir}/workspaces/{board_slug}/chairman",
+                "agentDir": f"{state_dir}/agents/{chairman_agent_id}/agent",
+            }
+        )
+        allow.append(chairman_agent_id)
+
+        for member in board.get("members", []):
+            member_agent_id = f"{board_slug}-{member['id']}"
+            agents.append(
+                {
+                    "id": member_agent_id,
+                    "name": member["name"],
+                    "workspace": f"{state_dir}/workspaces/{board_slug}/{member['id']}",
+                    "agentDir": f"{state_dir}/agents/{member_agent_id}/agent",
+                }
+            )
+            allow.append(member_agent_id)
+
+    return agents, allow
+
+
+def build_main_agent(state_dir: str) -> dict:
+    return {
+        "id": "main",
+        "name": "Main",
+        "workspace": f"{state_dir}/workspace",
+        "agentDir": f"{state_dir}/agents/main/agent",
+        "default": True,
+    }
 
 
 def main() -> None:
@@ -50,7 +126,11 @@ def main() -> None:
         cfg = json.load(f)
 
     is_azure = bool(os.environ.get("USER_SLUG"))
+    user_slug = os.environ.get("USER_SLUG", "").strip() or None
     force_no_auth = env_flag("OPENCLAW_FORCE_NO_AUTH")
+    feature_config = load_feature_config(
+        REPO_ROOT, os.environ.get("AZURE_ENVIRONMENT", "dev"), user_slug
+    )
 
     compass_base_url = os.environ.get("COMPASS_BASE_URL", "https://api.core42.ai/v1")
     compass_api_key = os.environ.get("COMPASS_API_KEY", "").strip()
@@ -98,13 +178,43 @@ def main() -> None:
     providers = ensure_path(cfg, ["models", "providers"])
     compass = ensure_path(providers, ["compass"])
     compass["baseUrl"] = compass_base_url
-    if compass_api_key:
-        compass["apiKey"] = compass_api_key
-    else:
-        compass.pop("apiKey", None)
 
     defaults = ensure_path(cfg, ["agents", "defaults"])
     defaults["workspace"] = f"{state_dir}/workspace"
+    agents_cfg = ensure_path(cfg, ["agents"])
+    agents_cfg["defaults"] = defaults
+    plugin_entries = ensure_path(cfg, ["plugins", "entries"])
+    main_agent = build_main_agent(state_dir)
+    agents_cfg["list"] = [main_agent]
+
+    board_ids = feature_boards_or_env(feature_config, env_csv)
+    board_mode = len(board_ids) > 0
+    if board_mode:
+        board_router = ensure_path(plugin_entries, ["board-router"])
+        board_router_config = ensure_path(board_router, ["config"])
+        board_router_config["boardIds"] = board_ids
+        board_router["enabled"] = True
+
+        board_dir = resolve_default_path(
+            "OPENCLAW_BOARD_DIR", "/app/config/boards", "config/boards"
+        )
+        agents, allow = build_board_agents(state_dir, board_dir, board_ids)
+        for agent in agents:
+            agent.pop("default", None)
+        agents_cfg["list"] = [main_agent, *agents]
+        tools = ensure_path(cfg, ["tools"])
+        tools["agentToAgent"] = {"enabled": True, "allow": allow}
+
+        active_memory = ensure_path(
+            cfg, ["plugins", "entries", "active-memory", "config"]
+        )
+        active_memory["agents"] = [
+            "main",
+            *[agent["id"] for agent in agents if agent["id"].endswith("-chairman")],
+        ]
+    else:
+        plugin_entries.pop("board-router", None)
+        agents_cfg["defaults"] = defaults
 
     channels = ensure_path(cfg, ["channels"])
 
@@ -127,9 +237,6 @@ def main() -> None:
     msteams = ensure_path(channels, ["msteams"])
     if teams_ready:
         msteams["enabled"] = True
-        msteams["appId"] = teams_app_id
-        msteams["appPassword"] = teams_app_password
-        msteams["tenantId"] = teams_tenant_id
         webhook = ensure_path(msteams, ["webhook"])
         webhook["port"] = 3978
         webhook["path"] = "/api/messages"
@@ -178,7 +285,6 @@ def main() -> None:
                 "OPENCLAW_GATEWAY_AUTH_TOKEN is required in Azure/user mode unless OPENCLAW_FORCE_NO_AUTH=true"
             )
         auth["mode"] = "token"
-        auth["token"] = token
     else:
         auth["mode"] = "none"
         auth.pop("token", None)
@@ -193,18 +299,57 @@ def main() -> None:
     if not control_ui:
         gateway.pop("controlUi", None)
 
-    plugins = ensure_path(cfg, ["plugins", "entries", "tavily"])
-    plugins["enabled"] = True
-    web_search = ensure_path(plugins, ["config", "webSearch"])
-    web_search["baseUrl"] = "https://api.tavily.com"
-    tavily_key = os.environ.get("TAVILY_API_KEY", "").strip()
-    if tavily_key:
-        web_search["apiKey"] = tavily_key
-    else:
-        web_search.pop("apiKey", None)
+    tools_web = ensure_path(cfg, ["tools", "web"])
+    tavily_api_key = os.environ.get("TAVILY_API_KEY", "").strip()
+    plugins_are_explicit = plugins_explicitly_configured(feature_config)
+    enabled_plugins = set(feature_config.get("plugins", {}).get("enable", []))
+    disabled_plugins = set(feature_config.get("plugins", {}).get("disable", []))
+    if board_mode:
+        enabled_plugins.add("board-router")
+        disabled_plugins.discard("board-router")
+    overlap = enabled_plugins & disabled_plugins
+    if overlap:
+        fatal(
+            f"Feature config plugin overlap is not allowed: {', '.join(sorted(overlap))}"
+        )
 
-    tools_search = ensure_path(cfg, ["tools", "web", "search"])
-    tools_search["provider"] = "tavily"
+    known_plugins = set(plugin_entries.keys()) | {"tavily"}
+    unknown_plugins = (enabled_plugins | disabled_plugins) - known_plugins
+    if unknown_plugins:
+        fatal(
+            f"Feature config references unknown plugins: {', '.join(sorted(unknown_plugins))}"
+        )
+
+    tavily_enabled_by_feature = True
+    if plugins_are_explicit:
+        tavily_enabled_by_feature = "tavily" in enabled_plugins
+    if "tavily" in disabled_plugins:
+        tavily_enabled_by_feature = False
+
+    if tavily_enabled_by_feature and tavily_api_key:
+        tavily = ensure_path(plugin_entries, ["tavily"])
+        web_search = ensure_path(tavily, ["config", "webSearch"])
+        tavily["enabled"] = True
+        web_search["baseUrl"] = "https://api.tavily.com"
+        web_search["apiKey"] = tavily_api_key
+        ensure_path(tools_web, ["search"])["provider"] = "tavily"
+    else:
+        plugin_entries.pop("tavily", None)
+        tools_web.pop("search", None)
+        if not tools_web:
+            ensure_path(cfg, ["tools"]).pop("web", None)
+
+    for plugin_name, plugin_cfg in list(plugin_entries.items()):
+        if plugin_name == "tavily":
+            continue
+        if plugins_are_explicit and plugin_name not in enabled_plugins:
+            plugin_entries.pop(plugin_name, None)
+            continue
+        if plugin_name in disabled_plugins:
+            plugin_entries.pop(plugin_name, None)
+            continue
+        if isinstance(plugin_cfg, dict):
+            plugin_cfg.setdefault("enabled", True)
 
     cfg.pop("instructions", None)
 

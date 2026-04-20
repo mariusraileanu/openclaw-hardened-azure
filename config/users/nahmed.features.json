@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "profiles": [],
+  "boards": {
+    "enabled": []
+  },
+  "skills": {
+    "baseWorkspace": {
+      "allow": [
+        "m365-graph-gateway",
+        "prototype-webapp",
+        "self-improving-agent"
+      ]
+    },
+    "chairman": {
+      "allow": []
+    },
+    "members": {
+      "allow": []
+    }
+  },
+  "plugins": {
+    "enable": [
+      "active-memory",
+      "memory-core",
+      "memory-wiki",
+      "tavily"
+    ],
+    "disable": []
+  }
+}

@@ -35,4 +35,28 @@ def bootstrap_config(repo_root: Path, env_name: str, user: str | None) -> int:
             )
             print(f"Created {user_file.relative_to(repo_root)} from template")
 
+        user_features_file = users_dir / f"{user}.features.json"
+        user_features_template = users_dir / "user.features.example.json"
+        if not user_features_file.exists() and user_features_template.exists():
+            user_features_file.write_text(
+                user_features_template.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+            print(f"Created {user_features_file.relative_to(repo_root)} from template")
+
+        local_user_features_file = local_dir / f"{env_name}.{user}.features.json"
+        local_user_features_template = (
+            local_dir / f"{env_name}.user.features.example.json"
+        )
+        if (
+            not local_user_features_file.exists()
+            and local_user_features_template.exists()
+        ):
+            local_user_features_file.write_text(
+                local_user_features_template.read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            print(
+                f"Created {local_user_features_file.relative_to(repo_root)} from template"
+            )
+
     return 0

@@ -6,7 +6,7 @@
 #   docker manifest inspect ghcr.io/openclaw/openclaw:latest
 #   docker inspect ghcr.io/openclaw/openclaw:latest --format='{{index .RepoDigests 0}}'
 
-FROM ghcr.io/openclaw/openclaw:2026.4.12@sha256:f02011ba4189761750f6e78c563999ba64ac73a6d0ccdd72cc6d0856cbe2c414
+FROM ghcr.io/openclaw/openclaw:2026.4.15
 
 USER root
 
@@ -25,13 +25,19 @@ RUN ln -sf /app/openclaw.mjs /usr/local/bin/openclaw
 
 # Copy enterprise baseline configuration, workspace template, proxy, and entrypoint
 COPY config/openclaw.json.template /app/config/openclaw.json.template
+COPY config/boards/ /app/config/boards/
 COPY scripts/build-openclaw-config.py /app/scripts/build-openclaw-config.py
+COPY scripts/feature_config.py /app/scripts/feature_config.py
+COPY scripts/member-evidence.mjs /app/scripts/member-evidence.mjs
+COPY scripts/render-agent-workspaces.py /app/scripts/render-agent-workspaces.py
+COPY scripts/run-board-meeting.mjs /app/scripts/run-board-meeting.mjs
+COPY extensions/board-router/ /app/extensions-local/board-router/
 COPY workspace/ /app/config/workspace/
 COPY loopback-proxy.mjs /app/loopback-proxy.mjs
 COPY entrypoint.sh /app/entrypoint.sh
 
 # Ensure entrypoint is executable
-RUN chmod +x /app/entrypoint.sh /app/scripts/build-openclaw-config.py
+RUN chmod +x /app/entrypoint.sh /app/scripts/build-openclaw-config.py /app/scripts/feature_config.py /app/scripts/render-agent-workspaces.py /app/scripts/run-board-meeting.mjs
 
 USER 1000:1000
 

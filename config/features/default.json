@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "profiles": [],
+  "boards": {
+    "enabled": []
+  },
+  "skills": {
+    "baseWorkspace": {
+      "allow": []
+    },
+    "chairman": {
+      "allow": []
+    },
+    "members": {
+      "allow": []
+    }
+  },
+  "plugins": {
+    "enable": [],
+    "disable": []
+  }
+}

@@ -22,7 +22,13 @@
       "model": {
         "primary": "compass/gpt-5.1"
       },
-      "workspace": "${OPENCLAW_STATE_DIR}/workspace"
+      "workspace": "${OPENCLAW_STATE_DIR}/workspace",
+      "heartbeat": {
+        "isolatedSession": true
+      },
+      "compaction": {
+        "mode": "safeguard"
+      }
     }
   },
   "tools": {
@@ -110,11 +116,18 @@
           }
         }
       },
+      "board-router": {
+        "enabled": true,
+        "config": {
+          "boardIds": []
+        }
+      },
       "tavily": {
         "enabled": true,
         "config": {
           "webSearch": {
-            "baseUrl": "https://api.tavily.com"
+            "baseUrl": "https://api.tavily.com",
+            "apiKey": "${TAVILY_API_KEY}"
           }
         }
       }

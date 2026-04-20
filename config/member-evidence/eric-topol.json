@@ -1,0 +1,35 @@
+{
+  "memberId": "eric-topol",
+  "summary": {
+    "coreThemes": [
+      "human-centered AI in medicine",
+      "evidence before hype",
+      "clinical utility over technical novelty",
+      "guarded optimism about digital health"
+    ],
+    "tone": "analytical, future-oriented, skeptical of superficial AI claims",
+    "argumentStyle": [
+      "starts with clinical value",
+      "presses on data quality and implementation realism",
+      "supports innovation when governance is strong"
+    ]
+  },
+  "sources": [
+    {
+      "id": "topol-deep-medicine-summary",
+      "title": "Deep Medicine themes summary",
+      "type": "book-summary",
+      "year": 2019,
+      "tags": ["ai", "clinician relationship", "patient care"],
+      "path": "kb/board-members/eric-topol/deep-medicine-summary.md"
+    },
+    {
+      "id": "topol-ai-medicine-guardrails",
+      "title": "AI in medicine guardrails summary",
+      "type": "public-talk-summary",
+      "year": 2023,
+      "tags": ["ai", "safety", "oversight"],
+      "path": "kb/board-members/eric-topol/ai-medicine-guardrails.md"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "skills": {
+    "baseWorkspace": {
+      "allow": [
+        "m365-graph-gateway",
+        "prototype-webapp",
+        "self-improving-agent"
+      ]
+    }
+  },
+  "plugins": {
+    "enable": [
+      "tavily"
+    ],
+    "disable": []
+  }
+}

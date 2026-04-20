@@ -275,7 +275,7 @@ def usage_sessions(
                 "for p in sorted(glob.glob('/app/data/*')):",
                 " if not os.path.isdir(p): continue",
                 " u=os.path.basename(p);seen=set();c=0",
-                " for f in glob.glob(p+'/.openclaw/agents/main/sessions/*.jsonl*'):",
+                " for f in glob.glob(p+'/.openclaw/agents/*/sessions/*.jsonl*'):",
                 "  try:h=open(f,'r',encoding='utf-8',errors='ignore')",
                 "  except: continue",
                 "  for l in h:",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 from common import (
     REQUIRED_SHARED_KEYS,
@@ -14,6 +15,27 @@ from env_loader import load_layered_env
 from naming import resolve_and_validate_naming
 from runner import run, run_capture, run_quiet
 from signal_ops import signal_update_phones
+
+
+def _load_user_feature_json(repo_root: Path, env_name: str, user: str) -> str:
+    candidates = [
+        repo_root / "config" / "users" / f"{user}.features.json",
+        repo_root / "config" / "local" / f"{env_name}.{user}.features.json",
+    ]
+    merged: dict = {}
+    loaded = False
+    for path in candidates:
+        if not path.exists():
+            continue
+        loaded = True
+        with path.open("r", encoding="utf-8") as f:
+            payload = json.load(f)
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"Feature config must be a JSON object: {path}")
+        merged.update(payload)
+    if not loaded:
+        return ""
+    return json.dumps(merged, separators=(",", ":"))
 
 
 def _discover_graph_mcp_url(
@@ -235,12 +257,16 @@ def _tf_user_env(
         "TF_VAR_msteams_enabled": context.get("MSTEAMS_ENABLED", ""),
         "TF_VAR_msteams_tenant_id": context.get("MSTEAMS_TENANT_ID", ""),
         "TF_VAR_msteams_app_id": context.get("MSTEAMS_APP_ID", ""),
+        "TF_VAR_openclaw_features_json": context.get("OPENCLAW_FEATURES_JSON", ""),
     }
     return extra
 
 
 def deploy_user(repo_root: Path, env_name: str, user: str, plan: bool) -> int:
     context = _prepare_context(repo_root, env_name, user)
+    context["OPENCLAW_FEATURES_JSON"] = _load_user_feature_json(
+        repo_root, env_name, user
+    )
     ensure_shared_requirements(context)
 
     if not has_active_az_session(repo_root, context):

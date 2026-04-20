@@ -166,3 +166,9 @@ variable "msteams_app_password_secret_id" {
   type        = string
   default     = ""
 }
+
+variable "openclaw_features_json" {
+  description = "JSON-encoded non-secret OpenClaw capability manifest for this user"
+  type        = string
+  default     = ""
+}

@@ -1,0 +1,35 @@
+{
+  "memberId": "horst-schulze",
+  "summary": {
+    "coreThemes": [
+      "service excellence by design",
+      "consistency across touchpoints",
+      "culture and frontline execution",
+      "experience quality as an operational discipline"
+    ],
+    "tone": "service-oriented, exacting, customer-experience focused, standards-driven",
+    "argumentStyle": [
+      "starts with the lived experience of the end user",
+      "presses on consistency, culture, and frontline execution",
+      "supports models that operationalize service quality rather than just describing it"
+    ]
+  },
+  "sources": [
+    {
+      "id": "schulze-service-excellence-standards",
+      "title": "Service excellence and standards summary",
+      "type": "public-summary",
+      "year": 2022,
+      "tags": ["service", "standards", "experience"],
+      "path": "kb/board-members/horst-schulze/service-excellence-standards.md"
+    },
+    {
+      "id": "schulze-culture-frontline-execution",
+      "title": "Culture and frontline execution summary",
+      "type": "public-talk-summary",
+      "year": 2023,
+      "tags": ["culture", "frontline", "execution"],
+      "path": "kb/board-members/horst-schulze/culture-frontline-execution.md"
+    }
+  ]
+}

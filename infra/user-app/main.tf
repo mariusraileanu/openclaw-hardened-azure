@@ -50,6 +50,7 @@ locals {
       { name = "COMPASS_API_KEY", secretRef = "compass-api-key" },
       { name = "GRAPH_MCP_URL", secretRef = "graph-mcp-url" },
       { name = "USER_SLUG", value = var.user_slug },
+      { name = "OPENCLAW_FEATURES_JSON", value = var.openclaw_features_json },
       # Gateway runs on loopback behind the HTTP proxy; token auth is unnecessary.
       { name = "OPENCLAW_FORCE_NO_AUTH", value = "true" },
     ],
@@ -378,6 +379,11 @@ resource "azurerm_container_app" "user" {
       env {
         name  = "USER_SLUG"
         value = var.user_slug
+      }
+
+      env {
+        name  = "OPENCLAW_FEATURES_JSON"
+        value = var.openclaw_features_json
       }
 
       env {

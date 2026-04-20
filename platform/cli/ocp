@@ -88,7 +88,16 @@ def cmd_config_validate(args: argparse.Namespace) -> int:
     command = ["./scripts/validate-config.py", "--env", args.env]
     if args.user:
         command.extend(["--user", args.user])
-    return run(command)
+    rc = run(command)
+    if rc != 0:
+        return rc
+    feature_command = ["./scripts/validate-features.py", "--env", args.env]
+    if args.user:
+        feature_command.extend(["--user", args.user])
+    rc = run(feature_command)
+    if rc != 0:
+        return rc
+    return run(["./scripts/validate-member-evidence.py"])
 
 
 def cmd_deploy_shared(args: argparse.Namespace) -> int:

@@ -160,6 +160,12 @@
       "required": false
     },
     {
+      "name": "OPENCLAW_BOARDS",
+      "scope": "shared",
+      "type": "string",
+      "required": false
+    },
+    {
       "name": "SIGNAL_USER_PHONE",
       "scope": "user",
       "type": "e164",
@@ -187,6 +193,12 @@
       "name": "MSTEAMS_ENABLED",
       "scope": "user",
       "type": "bool",
+      "required": false
+    },
+    {
+      "name": "OPENCLAW_FEATURES_JSON",
+      "scope": "user",
+      "type": "json_object",
       "required": false
     }
   ]

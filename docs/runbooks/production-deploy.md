@@ -50,10 +50,21 @@ Then create per-user overlay files:
 
 ```bash
 cp config/users/user.example.env config/users/alice.env
+cp config/users/user.features.example.json config/users/alice.features.json
 # Edit config/users/alice.env -- set SIGNAL_USER_PHONE, optional API key overrides
+# Edit config/users/alice.features.json -- set boards, profiles, skills, plugins
 
 ./platform/cli/ocp config validate --env prod --user alice
 ```
+
+Per-user config split:
+
+- `config/users/<slug>.env` for secrets, phone numbers, and channel toggles
+- `config/users/<slug>.features.json` for non-secret capability policy:
+  - enabled boards
+  - profiles
+  - allowed skills
+  - enabled/disabled plugins
 
 ## Step 2: Build and Push the Golden Image
 

@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "description": "Schema for non-secret OpenClaw capability manifests",
+  "type": "object",
+  "required": ["version", "boards", "skills", "plugins"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "enum": [1]
+    },
+    "profiles": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "boards": {
+      "type": "object",
+      "required": ["enabled"],
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        }
+      }
+    },
+    "skills": {
+      "type": "object",
+      "required": ["baseWorkspace", "chairman", "members"],
+      "additionalProperties": false,
+      "properties": {
+        "baseWorkspace": { "$ref": "#/definitions/skillRoleConfig" },
+        "chairman": { "$ref": "#/definitions/skillRoleConfig" },
+        "members": { "$ref": "#/definitions/skillRoleConfig" }
+      }
+    },
+    "plugins": {
+      "type": "object",
+      "required": ["enable", "disable"],
+      "additionalProperties": false,
+      "properties": {
+        "enable": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "disable": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        }
+      }
+    }
+  },
+  "definitions": {
+    "skillRoleConfig": {
+      "type": "object",
+      "required": ["allow"],
+      "additionalProperties": false,
+      "properties": {
+        "allow": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        }
+      }
+    }
+  }
+}

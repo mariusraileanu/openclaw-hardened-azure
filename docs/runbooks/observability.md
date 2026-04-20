@@ -105,7 +105,7 @@ It reports columns for the last 48 hours, 7 days, 14 days, and 30 days.
 
 Notes:
 
-- `--source sessions` reads `/app/data/*/.openclaw/agents/main/sessions/*.jsonl*` via `az containerapp exec`.
+- `--source sessions` reads `/app/data/*/.openclaw/agents/*/sessions/*.jsonl*` via `az containerapp exec`.
 - It counts user-originated Teams DMs by parsing embedded `System: [...] Teams DM from ...` entries.
 - It deduplicates by embedded `message_id` when present and normalizes user aliases (trailing-space slug variants).
 
