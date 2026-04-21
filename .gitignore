@@ -49,3 +49,6 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+# Tool config
+.opencode/

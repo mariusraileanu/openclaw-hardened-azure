@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { retrieveMemberEvidence } from './member-evidence.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(__dirname, '..');
+const repoRoot = path.resolve(__dirname, '../..');
 const runningInsideContainer = process.env.OPENCLAW_CONFIG_FILE?.startsWith('/app/') ?? false;
 
 function usage() {

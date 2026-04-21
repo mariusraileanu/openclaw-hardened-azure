@@ -13,7 +13,7 @@ from feature_config import (
 )
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def env_flag(name: str) -> bool:

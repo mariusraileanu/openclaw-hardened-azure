@@ -19,8 +19,8 @@ export MSTEAMS_TENANT_ID="00000000-0000-0000-0000-000000000002"
 OUT1="${TMPDIR_PATH}/openclaw-1.json"
 OUT2="${TMPDIR_PATH}/openclaw-2.json"
 
-python3 scripts/build-openclaw-config.py --template config/openclaw.json.template --output "$OUT1"
-python3 scripts/build-openclaw-config.py --template config/openclaw.json.template --output "$OUT2"
+python3 platform/scripts/build_config.py --template config/openclaw.json.template --output "$OUT1"
+python3 platform/scripts/build_config.py --template config/openclaw.json.template --output "$OUT2"
 
 SUM1="$(sha256sum "$OUT1" | awk '{print $1}')"
 SUM2="$(sha256sum "$OUT2" | awk '{print $1}')"
