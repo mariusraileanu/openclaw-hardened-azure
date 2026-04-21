@@ -20,16 +20,24 @@
       "title": "Health security and system resilience summary",
       "type": "public-summary",
       "year": 2023,
-      "tags": ["resilience", "preparedness", "health security"],
-      "path": "kb/board-members/tom-inglesby/health-security-resilience.md"
+      "tags": [
+        "resilience",
+        "preparedness",
+        "health security"
+      ],
+      "path": "config/boards/members/tom-inglesby/health-security-resilience.md"
     },
     {
       "id": "inglesby-preparedness-failure-modes",
       "title": "Preparedness and failure mode planning summary",
       "type": "public-talk-summary",
       "year": 2022,
-      "tags": ["preparedness", "failure modes", "operations"],
-      "path": "kb/board-members/tom-inglesby/preparedness-failure-modes.md"
+      "tags": [
+        "preparedness",
+        "failure modes",
+        "operations"
+      ],
+      "path": "config/boards/members/tom-inglesby/preparedness-failure-modes.md"
     }
   ]
 }

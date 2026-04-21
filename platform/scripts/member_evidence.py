@@ -56,7 +56,7 @@ def _read_json(path: Path) -> dict:
 
 
 def retrieve_member_evidence(member_id: str, agenda_text: str, limit: int = 3) -> dict:
-    metadata_path = REPO_ROOT / "config" / "member-evidence" / f"{member_id}.json"
+    metadata_path = REPO_ROOT / "config" / "boards" / "members" / member_id / "evidence.json"
     if not metadata_path.exists():
         return {"memberId": member_id, "summary": {}, "snippets": []}
 

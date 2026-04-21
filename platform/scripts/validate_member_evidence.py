@@ -25,20 +25,20 @@ def read_json(path: Path) -> dict:
 
 
 def validate_member_evidence(repo_root: Path) -> None:
-    evidence_dir = repo_root / "config" / "member-evidence"
-    if not evidence_dir.exists():
-        print("No member evidence directory found; skipping member evidence validation")
+    members_dir = repo_root / "config" / "boards" / "members"
+    if not members_dir.exists():
+        print("No board members directory found; skipping member evidence validation")
         return
 
     errors: list[str] = []
-    for path in sorted(evidence_dir.glob("*.json")):
+    for path in sorted(members_dir.glob("*/evidence.json")):
         payload = read_json(path)
         label = str(path.relative_to(repo_root))
         member_id = payload.get("memberId", "")
         if not isinstance(member_id, str) or not member_id.strip():
             errors.append(f"[{label}] memberId must be a non-empty string")
-        if path.stem != member_id:
-            errors.append(f"[{label}] filename must match memberId")
+        if path.parent.name != member_id:
+            errors.append(f"[{label}] directory name must match memberId")
 
         summary = payload.get("summary", {})
         if not isinstance(summary, dict):

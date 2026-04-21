@@ -82,7 +82,7 @@ function splitIntoChunks(text, maxChars = 420) {
 }
 
 export function retrieveMemberEvidence(memberId, agendaText, limit = 3) {
-  const metadataPath = path.join(repoRoot, 'config', 'member-evidence', `${memberId}.json`);
+  const metadataPath = path.join(repoRoot, 'config', 'boards', 'members', memberId, 'evidence.json');
   if (!fs.existsSync(metadataPath)) {
     return { memberId, summary: {}, snippets: [] };
   }

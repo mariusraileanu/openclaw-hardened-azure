@@ -20,16 +20,24 @@
       "title": "Deep Medicine themes summary",
       "type": "book-summary",
       "year": 2019,
-      "tags": ["ai", "clinician relationship", "patient care"],
-      "path": "kb/board-members/eric-topol/deep-medicine-summary.md"
+      "tags": [
+        "ai",
+        "clinician relationship",
+        "patient care"
+      ],
+      "path": "config/boards/members/eric-topol/deep-medicine-summary.md"
     },
     {
       "id": "topol-ai-medicine-guardrails",
       "title": "AI in medicine guardrails summary",
       "type": "public-talk-summary",
       "year": 2023,
-      "tags": ["ai", "safety", "oversight"],
-      "path": "kb/board-members/eric-topol/ai-medicine-guardrails.md"
+      "tags": [
+        "ai",
+        "safety",
+        "oversight"
+      ],
+      "path": "config/boards/members/eric-topol/ai-medicine-guardrails.md"
     }
   ]
 }
