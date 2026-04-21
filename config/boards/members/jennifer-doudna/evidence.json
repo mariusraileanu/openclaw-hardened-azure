@@ -20,16 +20,24 @@
       "title": "Genomics innovation and governance summary",
       "type": "public-summary",
       "year": 2023,
-      "tags": ["genomics", "innovation", "governance"],
-      "path": "kb/board-members/jennifer-doudna/genomics-governance.md"
+      "tags": [
+        "genomics",
+        "innovation",
+        "governance"
+      ],
+      "path": "config/boards/members/jennifer-doudna/genomics-governance.md"
     },
     {
       "id": "doudna-breakthrough-science-translation",
       "title": "Breakthrough science and translation summary",
       "type": "public-talk-summary",
       "year": 2022,
-      "tags": ["translation", "scientific rigor", "biotech"],
-      "path": "kb/board-members/jennifer-doudna/breakthrough-science-translation.md"
+      "tags": [
+        "translation",
+        "scientific rigor",
+        "biotech"
+      ],
+      "path": "config/boards/members/jennifer-doudna/breakthrough-science-translation.md"
     }
   ]
 }

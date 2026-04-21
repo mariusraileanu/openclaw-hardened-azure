@@ -20,16 +20,24 @@
       "title": "Primary care as the anchor of integrated care summary",
       "type": "public-summary",
       "year": 2022,
-      "tags": ["primary care", "integration", "equity"],
-      "path": "kb/board-members/jan-de-maeseneer/primary-care-anchor.md"
+      "tags": [
+        "primary care",
+        "integration",
+        "equity"
+      ],
+      "path": "config/boards/members/jan-de-maeseneer/primary-care-anchor.md"
     },
     {
       "id": "de-maeseneer-community-health-reform",
       "title": "Community-oriented health reform summary",
       "type": "public-talk-summary",
       "year": 2023,
-      "tags": ["community health", "reform", "continuity"],
-      "path": "kb/board-members/jan-de-maeseneer/community-health-reform.md"
+      "tags": [
+        "community health",
+        "reform",
+        "continuity"
+      ],
+      "path": "config/boards/members/jan-de-maeseneer/community-health-reform.md"
     }
   ]
 }

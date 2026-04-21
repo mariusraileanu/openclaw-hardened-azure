@@ -20,16 +20,24 @@
       "title": "Service excellence and standards summary",
       "type": "public-summary",
       "year": 2022,
-      "tags": ["service", "standards", "experience"],
-      "path": "kb/board-members/horst-schulze/service-excellence-standards.md"
+      "tags": [
+        "service",
+        "standards",
+        "experience"
+      ],
+      "path": "config/boards/members/horst-schulze/service-excellence-standards.md"
     },
     {
       "id": "schulze-culture-frontline-execution",
       "title": "Culture and frontline execution summary",
       "type": "public-talk-summary",
       "year": 2023,
-      "tags": ["culture", "frontline", "execution"],
-      "path": "kb/board-members/horst-schulze/culture-frontline-execution.md"
+      "tags": [
+        "culture",
+        "frontline",
+        "execution"
+      ],
+      "path": "config/boards/members/horst-schulze/culture-frontline-execution.md"
     }
   ]
 }

@@ -20,16 +20,24 @@
       "title": "Integrative care and evidence awareness summary",
       "type": "public-summary",
       "year": 2023,
-      "tags": ["integrative care", "evidence", "traditional chinese medicine"],
-      "path": "kb/board-members/huang-luqi/integrative-care-evidence.md"
+      "tags": [
+        "integrative care",
+        "evidence",
+        "traditional chinese medicine"
+      ],
+      "path": "config/boards/members/huang-luqi/integrative-care-evidence.md"
     },
     {
       "id": "huang-cultural-fit-complementary-care",
       "title": "Cultural fit and complementary care summary",
       "type": "public-talk-summary",
       "year": 2022,
-      "tags": ["culture", "complementary care", "systems"],
-      "path": "kb/board-members/huang-luqi/cultural-fit-complementary-care.md"
+      "tags": [
+        "culture",
+        "complementary care",
+        "systems"
+      ],
+      "path": "config/boards/members/huang-luqi/cultural-fit-complementary-care.md"
     }
   ]
 }

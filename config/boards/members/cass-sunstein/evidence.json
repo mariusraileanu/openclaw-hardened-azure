@@ -20,16 +20,24 @@
       "title": "Choice architecture and public policy summary",
       "type": "book-summary",
       "year": 2021,
-      "tags": ["behavior", "policy", "choice architecture"],
-      "path": "kb/board-members/cass-sunstein/choice-architecture.md"
+      "tags": [
+        "behavior",
+        "policy",
+        "choice architecture"
+      ],
+      "path": "config/boards/members/cass-sunstein/choice-architecture.md"
     },
     {
       "id": "sunstein-behavior-change-implementation",
       "title": "Behavior change implementation summary",
       "type": "public-talk-summary",
       "year": 2023,
-      "tags": ["behavior change", "implementation", "policy design"],
-      "path": "kb/board-members/cass-sunstein/behavior-change-implementation.md"
+      "tags": [
+        "behavior change",
+        "implementation",
+        "policy design"
+      ],
+      "path": "config/boards/members/cass-sunstein/behavior-change-implementation.md"
     }
   ]
 }

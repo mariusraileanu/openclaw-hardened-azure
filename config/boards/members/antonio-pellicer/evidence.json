@@ -20,16 +20,24 @@
       "title": "Fertility care quality and access summary",
       "type": "public-summary",
       "year": 2022,
-      "tags": ["fertility", "quality", "access"],
-      "path": "kb/board-members/antonio-pellicer/fertility-care-quality.md"
+      "tags": [
+        "fertility",
+        "quality",
+        "access"
+      ],
+      "path": "config/boards/members/antonio-pellicer/fertility-care-quality.md"
     },
     {
       "id": "pellicer-innovation-in-reproductive-medicine",
       "title": "Innovation in reproductive medicine summary",
       "type": "public-talk-summary",
       "year": 2023,
-      "tags": ["ivf", "innovation", "clinical safeguards"],
-      "path": "kb/board-members/antonio-pellicer/innovation-reproductive-medicine.md"
+      "tags": [
+        "ivf",
+        "innovation",
+        "clinical safeguards"
+      ],
+      "path": "config/boards/members/antonio-pellicer/innovation-reproductive-medicine.md"
     }
   ]
 }

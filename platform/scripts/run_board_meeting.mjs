@@ -554,10 +554,10 @@ export async function runBoardMeeting(argsInput) {
   const agendaPayload = normalizeAgenda(JSON.parse(await fs.readFile(agendaPath, 'utf8')));
   const outputPath = args.output
     ? path.resolve(process.cwd(), args.output)
-    : path.resolve(repoRoot, 'board-meetings', `${agendaPayload.meetingId}.result.md`);
+    : path.resolve(repoRoot, 'config', 'boards', 'meetings', `${agendaPayload.meetingId}.result.md`);
   const traceOutputPath = args.traceOutput
     ? path.resolve(process.cwd(), args.traceOutput)
-    : path.resolve(repoRoot, 'board-meetings', `${agendaPayload.meetingId}.trace.json`);
+    : path.resolve(repoRoot, 'config', 'boards', 'meetings', `${agendaPayload.meetingId}.trace.json`);
 
   const runId = `${Date.now()}`;
   const runtime = await createMeetingRuntime(runId);

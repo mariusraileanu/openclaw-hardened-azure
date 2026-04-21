@@ -20,16 +20,24 @@
       "title": "Drug development realism summary",
       "type": "public-summary",
       "year": 2023,
-      "tags": ["drug development", "biopharma", "execution"],
-      "path": "kb/board-members/vas-narasimhan/drug-development-realism.md"
+      "tags": [
+        "drug development",
+        "biopharma",
+        "execution"
+      ],
+      "path": "config/boards/members/vas-narasimhan/drug-development-realism.md"
     },
     {
       "id": "narasimhan-innovation-scaling",
       "title": "Innovation scaling and portfolio discipline summary",
       "type": "public-talk-summary",
       "year": 2022,
-      "tags": ["portfolio", "scale", "innovation"],
-      "path": "kb/board-members/vas-narasimhan/innovation-scaling.md"
+      "tags": [
+        "portfolio",
+        "scale",
+        "innovation"
+      ],
+      "path": "config/boards/members/vas-narasimhan/innovation-scaling.md"
     }
   ]
 }
