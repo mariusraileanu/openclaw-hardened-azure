@@ -47,13 +47,13 @@ fi
 echo "Refreshing board workspaces and base board-routing rules ..."
 /app/platform/scripts/render_workspaces.py
 
-if [[ -d "/app/extensions-local/board-router" ]]; then
+if [[ -d "/app/plugins/board-router" ]]; then
   # Remove any stale installed copy so `plugins install` can overwrite cleanly.
   # The data volume persists across container restarts; without this, the
   # install command errors with "plugin already exists".
   rm -rf "${OPENCLAW_STATE_DIR}/extensions/board-router"
   echo "Installing local board-router plugin ..."
-  openclaw plugins install /app/extensions-local/board-router || {
+  openclaw plugins install /app/plugins/board-router || {
     echo "FATAL: failed to install board-router plugin" >&2
     exit 1
   }
