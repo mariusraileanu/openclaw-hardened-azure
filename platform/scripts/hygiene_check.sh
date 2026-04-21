@@ -38,7 +38,7 @@ is_violation() {
       ;;
 
     # Build outputs that must remain generated-only
-    teams-app/dist/*|teams-relay/dist/*)
+    channels/teams-app/dist/*|channels/teams-relay/dist/*)
       return 0
       ;;
   esac

@@ -187,14 +187,14 @@ def teams_routing_disable(
 def teams_manifest(repo_root: Path, env_name: str) -> int:
     print(f"▸ Rendering Teams manifest for ENV={env_name}")
     rc = run(
-        ["node", "teams-app/render-manifest.mjs"], repo_root, env={"ENV": env_name}
+        ["node", "channels/teams-app/render-manifest.mjs"], repo_root, env={"ENV": env_name}
     )
     if rc != 0:
         return rc
-    run(["mkdir", "-p", f"teams-app/dist/{env_name}"], repo_root)
+    run(["mkdir", "-p", f"channels/teams-app/dist/{env_name}"], repo_root)
     if env_name == "dev":
         return run(
-            ["cp", "teams-app/dist/dev/manifest.json", "teams-app/manifest.json"],
+            ["cp", "channels/teams-app/dist/dev/manifest.json", "channels/teams-app/manifest.json"],
             repo_root,
         )
     return 0
@@ -213,13 +213,13 @@ def teams_validate(repo_root: Path, env_name: str) -> int:
     if rc != 0:
         return rc
     return run(
-        ["node", "teams-app/check-manifest.mjs"], repo_root, env={"ENV": env_name}
+        ["node", "channels/teams-app/check-manifest.mjs"], repo_root, env={"ENV": env_name}
     )
 
 
 def teams_package(repo_root: Path, env_name: str) -> int:
     print(f"▸ Packaging Teams app for ENV={env_name}")
-    return run(["teams-app/package-teams-app.sh"], repo_root, env={"ENV": env_name})
+    return run(["channels/teams-app/package-teams-app.sh"], repo_root, env={"ENV": env_name})
 
 
 def teams_release_check(repo_root: Path) -> int:
@@ -308,10 +308,10 @@ def _close_key_vault_firewall(
 def teams_relay_build(repo_root: Path, env_name: str) -> int:
     _ = _prepare_context(repo_root, env_name)
     print("▸ Building Teams relay Function App")
-    install_rc = run(["npm", "--prefix", "teams-relay", "install"], repo_root)
+    install_rc = run(["npm", "--prefix", "channels/teams-relay", "install"], repo_root)
     if install_rc != 0:
         return install_rc
-    return run(["npm", "--prefix", "teams-relay", "run", "build"], repo_root)
+    return run(["npm", "--prefix", "channels/teams-relay", "run", "build"], repo_root)
 
 
 def teams_relay_deploy(repo_root: Path, env_name: str) -> int:
@@ -401,5 +401,5 @@ def teams_relay_deploy(repo_root: Path, env_name: str) -> int:
         print(f"Relay hostname: {relay_hostname}")
     print("Now deploy the relay code:")
     func_name = context.get("FUNC_RELAY_NAME", f"func-relay-{env_name}")
-    print(f"  func azure functionapp publish {func_name} --prefix teams-relay")
+    print(f"  func azure functionapp publish {func_name} --prefix channels/teams-relay")
     return 0

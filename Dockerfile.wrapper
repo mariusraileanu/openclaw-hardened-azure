@@ -36,7 +36,7 @@ COPY platform/scripts/render_workspaces.py /app/platform/scripts/render_workspac
 COPY platform/scripts/run_board_meeting.mjs /app/platform/scripts/run_board_meeting.mjs
 COPY extensions/board-router/ /app/extensions-local/board-router/
 COPY workspace/ /app/config/workspace/
-COPY loopback-proxy.mjs /app/loopback-proxy.mjs
+COPY channels/loopback-proxy.mjs /app/channels/loopback-proxy.mjs
 COPY entrypoint.sh /app/entrypoint.sh
 
 # Ensure entrypoint is executable
