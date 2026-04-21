@@ -25,7 +25,7 @@ export OPENCLAW_STATE_DIR="${DATA_ROOT}/.openclaw"
 # Build deterministic runtime config from versioned template tooling.
 # This replaces repeated per-feature mutation blocks with one schema-safe build.
 if command -v python3 >/dev/null 2>&1; then
-  /app/scripts/build-openclaw-config.py \
+  /app/platform/scripts/build_config.py \
     --template /app/config/openclaw.json.template \
     --output "${OPENCLAW_CONFIG_FILE}"
   chmod 600 "${OPENCLAW_CONFIG_FILE}"
@@ -45,7 +45,7 @@ if [[ ! -d "${OPENCLAW_STATE_DIR}/workspace" ]]; then
 fi
 
 echo "Refreshing board workspaces and base board-routing rules ..."
-/app/scripts/render-agent-workspaces.py
+/app/platform/scripts/render_workspaces.py
 
 if [[ -d "/app/extensions-local/board-router" ]]; then
   # Remove any stale installed copy so `plugins install` can overwrite cleanly.

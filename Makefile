@@ -172,20 +172,20 @@ tf-bootstrap-state: ## Provision remote TF state backend (run once)
 
 naming-check: ## Validate naming contract and print resolved names
 	$(check_env_file)
-	@ENV_NAME=$(ENV) scripts/naming-contract.sh validate
+	@ENV_NAME=$(ENV) platform/scripts/naming_contract.sh validate
 	@echo "Resolved names (ENV=$(ENV)):"
-	@echo "  AZURE_RESOURCE_GROUP      = $$(ENV_NAME=$(ENV) scripts/naming-contract.sh get AZURE_RESOURCE_GROUP)"
-	@echo "  AZURE_CONTAINERAPPS_ENV   = $$(ENV_NAME=$(ENV) scripts/naming-contract.sh get AZURE_CONTAINERAPPS_ENV)"
-	@echo "  AZURE_ACR_NAME            = $$(ENV_NAME=$(ENV) scripts/naming-contract.sh get AZURE_ACR_NAME)"
-	@echo "  AZURE_KEY_VAULT_NAME      = $$(ENV_NAME=$(ENV) scripts/naming-contract.sh get AZURE_KEY_VAULT_NAME)"
-	@echo "  NFS_SA_NAME               = $$(ENV_NAME=$(ENV) scripts/naming-contract.sh get NFS_SA_NAME)"
-	@echo "  CAE_NFS_STORAGE_NAME      = $$(ENV_NAME=$(ENV) scripts/naming-contract.sh get CAE_NFS_STORAGE_NAME)"
-	@echo "  TF_STATE_RG               = $$(ENV_NAME=$(ENV) scripts/naming-contract.sh get TF_STATE_RG)"
-	@echo "  TF_STATE_SA               = $$(ENV_NAME=$(ENV) scripts/naming-contract.sh get TF_STATE_SA)"
-	@echo "  TF_STATE_KEY              = $$(ENV_NAME=$(ENV) scripts/naming-contract.sh get TF_STATE_KEY)"
+	@echo "  AZURE_RESOURCE_GROUP      = $$(ENV_NAME=$(ENV) platform/scripts/naming_contract.sh get AZURE_RESOURCE_GROUP)"
+	@echo "  AZURE_CONTAINERAPPS_ENV   = $$(ENV_NAME=$(ENV) platform/scripts/naming_contract.sh get AZURE_CONTAINERAPPS_ENV)"
+	@echo "  AZURE_ACR_NAME            = $$(ENV_NAME=$(ENV) platform/scripts/naming_contract.sh get AZURE_ACR_NAME)"
+	@echo "  AZURE_KEY_VAULT_NAME      = $$(ENV_NAME=$(ENV) platform/scripts/naming_contract.sh get AZURE_KEY_VAULT_NAME)"
+	@echo "  NFS_SA_NAME               = $$(ENV_NAME=$(ENV) platform/scripts/naming_contract.sh get NFS_SA_NAME)"
+	@echo "  CAE_NFS_STORAGE_NAME      = $$(ENV_NAME=$(ENV) platform/scripts/naming_contract.sh get CAE_NFS_STORAGE_NAME)"
+	@echo "  TF_STATE_RG               = $$(ENV_NAME=$(ENV) platform/scripts/naming_contract.sh get TF_STATE_RG)"
+	@echo "  TF_STATE_SA               = $$(ENV_NAME=$(ENV) platform/scripts/naming_contract.sh get TF_STATE_SA)"
+	@echo "  TF_STATE_KEY              = $$(ENV_NAME=$(ENV) platform/scripts/naming_contract.sh get TF_STATE_KEY)"
 
 hygiene-check: ## Fail if forbidden tracked files exist
-	@./scripts/hygiene-check.sh
+	@./platform/scripts/hygiene_check.sh
 
 config-bootstrap: ## Ensure local config exists (delegates to ocp)
 	@$(OCP) config bootstrap --env "$(ENV)" $(if $(U),--user "$(U)",)
@@ -236,7 +236,7 @@ show-image: ## Print the full image reference
 	@echo "$(IMAGE_REF)"
 
 config-determinism-check: ## Verify deterministic OpenClaw config assembly
-	@./scripts/check-config-determinism.sh
+	@./platform/scripts/check_determinism.sh
 
 # ===========================================================================
 # PER-USER DEPLOYMENT

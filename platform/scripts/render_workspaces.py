@@ -7,7 +7,7 @@ from pathlib import Path
 from feature_config import feature_boards_or_env, load_feature_config, skill_allowlist
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def env_csv(name: str) -> list[str]:
