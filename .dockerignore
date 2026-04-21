@@ -3,8 +3,8 @@
 .opencode
 .ruff_cache
 infra
-signal-proxy
-teams-relay
+channels/signal-proxy
+channels/teams-relay
 *.md
 !config/openclaw.json.template
 !workspace/**/*.md

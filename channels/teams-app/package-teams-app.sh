@@ -7,8 +7,8 @@ if [[ "$ENV_NAME" != "dev" && "$ENV_NAME" != "stage" && "$ENV_NAME" != "prod" ]]
   exit 1
 fi
 
-ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-TEAMS_DIR="$ROOT_DIR/teams-app"
+ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+TEAMS_DIR="$ROOT_DIR/channels/teams-app"
 DIST_DIR="$TEAMS_DIR/dist/$ENV_NAME"
 PACKAGE_PATH="$DIST_DIR/openclaw-teams-$ENV_NAME.zip"
 

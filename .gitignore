@@ -20,8 +20,8 @@ __pycache__/
 
 # Build output / test artifacts
 test-mcp.yaml
-teams-app/dist/
-teams-relay/dist/
+channels/teams-app/dist/
+channels/teams-relay/dist/
 
 # Azure Functions local settings (may contain connection strings)
 local.settings.json
@@ -37,7 +37,7 @@ config/**/*.env
 secrets.auto.tfvars
 
 # Compiled binaries
-signal-proxy/signal-proxy
+channels/signal-proxy/signal-proxy
 
 # OS
 .DS_Store
