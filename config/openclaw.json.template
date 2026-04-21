@@ -17,6 +17,16 @@
       }
     }
   },
+  "session": {
+    "reset": {
+      "idleMinutes": 120
+    },
+    "maintenance": {
+      "mode": "enforce",
+      "pruneAfter": "30d",
+      "maxEntries": 500
+    }
+  },
   "agents": {
     "defaults": {
       "model": {
@@ -27,7 +37,13 @@
         "isolatedSession": true
       },
       "compaction": {
-        "mode": "default"
+        "mode": "default",
+        "notifyUser": true,
+        "identifierPolicy": "strict"
+      },
+      "contextPruning": {
+        "mode": "cache-ttl",
+        "ttl": "5m"
       }
     }
   },
@@ -48,6 +64,7 @@
   },
   "memory": {
     "backend": "qmd",
+    "citations": "auto",
     "qmd": {
       "command": "/usr/local/bin/qmd",
       "searchMode": "search",
