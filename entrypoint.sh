@@ -196,7 +196,7 @@ if [ $# -eq 0 ]; then
   # It routes POST /api/messages → 127.0.0.1:3978 (Teams webhook) and
   # everything else → 127.0.0.1:18790 (OpenClaw gateway).
   # The gateway binds to loopback only, so auth.mode=none is safe.
-  node /app/loopback-proxy.mjs 18789 18790 3978 &
+  node /app/channels/loopback-proxy.mjs 18789 18790 3978 &
   exec openclaw gateway --allow-unconfigured --bind loopback --port 18790
 else
   exec openclaw "$@"

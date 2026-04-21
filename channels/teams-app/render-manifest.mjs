@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const repoRoot = process.cwd();
-const teamsDir = path.join(repoRoot, "teams-app");
+const teamsDir = path.join(repoRoot, "channels", "teams-app");
 const envName = process.env.ENV || process.argv[2] || "dev";
 const allowedEnvs = new Set(["dev", "stage", "prod"]);
 

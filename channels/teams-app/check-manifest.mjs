@@ -9,7 +9,7 @@ if (!allowedEnvs.has(envName)) {
   throw new Error(`Unsupported ENV '${envName}'. Use one of: dev, stage, prod.`);
 }
 
-const manifestPath = path.join(repoRoot, "teams-app", "dist", envName, "manifest.json");
+const manifestPath = path.join(repoRoot, "channels", "teams-app", "dist", envName, "manifest.json");
 
 if (!fs.existsSync(manifestPath)) {
   throw new Error(`Rendered manifest not found: ${manifestPath}`);
