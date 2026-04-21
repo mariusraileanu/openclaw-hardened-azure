@@ -155,6 +155,12 @@ chmod 644 /etc/profile.d/openclaw.sh
   echo "export OPENCLAW_GATEWAY_TOKEN=\"${OPENCLAW_GATEWAY_TOKEN}\""
 } >> "${HOME}/.bashrc" 2>/dev/null || true
 
+# Purge oversized/stale sessions on every boot using the built-in
+# maintenance command.  This prevents accumulated context from causing
+# overflow errors (e.g. the 1375-message session that broke Compass calls).
+echo "Running session maintenance ..."
+openclaw sessions cleanup --enforce --all-agents 2>&1 || true
+
 # Pre-seed the main webchat session so the Control UI shows it even when
 # heartbeat.isolatedSession is true.  The heartbeat gets its own session
 # (agent:main:main:heartbeat) and the Control UI has no "New Chat" button,

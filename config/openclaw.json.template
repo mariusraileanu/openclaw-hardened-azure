@@ -27,7 +27,7 @@
         "isolatedSession": true
       },
       "compaction": {
-        "mode": "safeguard"
+        "mode": "default"
       }
     }
   },

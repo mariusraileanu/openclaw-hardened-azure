@@ -1,6 +1,6 @@
 services:
   openclaw:
-    env_file: config/local/dev.env
+    env_file: config/env/dev.env
     build:
       context: .
       dockerfile: Dockerfile.wrapper

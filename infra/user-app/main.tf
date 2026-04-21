@@ -272,6 +272,7 @@ resource "azurerm_container_app" "user" {
   container_app_environment_id = data.azurerm_container_app_environment.shared.id
   resource_group_name          = data.azurerm_resource_group.shared.name
   revision_mode                = "Single"
+  workload_profile_name        = var.workload_profile_name != "" ? var.workload_profile_name : null
   tags                         = local.tags
 
   depends_on = [time_sleep.rbac_propagation]
@@ -283,7 +284,6 @@ resource "azurerm_container_app" "user" {
       template[0].init_container,             # Init container added by AzAPI patch
       template[0].container[0].startup_probe, # Azure/API may normalize probe ordering/fields after patch
       template[0].container[0].liveness_probe,
-      workload_profile_name, # Azure auto-sets to "Consumption"; not in our config
       tags["CreatedDate"],
     ]
   }

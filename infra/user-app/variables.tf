@@ -167,6 +167,12 @@ variable "msteams_app_password_secret_id" {
   default     = ""
 }
 
+variable "workload_profile_name" {
+  description = "Workload profile name (e.g. 'oc-dedicated'). Leave empty for Consumption profile."
+  type        = string
+  default     = ""
+}
+
 variable "openclaw_features_json" {
   description = "JSON-encoded non-secret OpenClaw capability manifest for this user"
   type        = string
