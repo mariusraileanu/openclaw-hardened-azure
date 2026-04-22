@@ -78,19 +78,20 @@ if [[ -f "${BOARD_ROUTING_SKILL}" ]]; then
   cp "${BOARD_ROUTING_SKILL}" /app/skills/board-routing/SKILL.md
 fi
 
-# Always resolve env var placeholders in skill docs on every boot.
-# This ensures GRAPH_MCP_URL changes propagate to existing workspaces
-# (same pattern as the Compass baseUrl and Signal httpUrl patching above).
+# Always refresh m365-graph-gateway SKILL.md from image source on every boot.
+# Creates the file if missing (e.g., workspace was seeded before the skill existed)
+# and resolves ${GRAPH_MCP_URL} placeholders when the env var is set.
 SKILL_FILE="${OPENCLAW_STATE_DIR}/workspace/skills/m365-graph-gateway/SKILL.md"
-if [[ -n "${GRAPH_MCP_URL:-}" ]] && [[ -f "${SKILL_FILE}" ]]; then
-  # Re-template from the image source (which has ${GRAPH_MCP_URL} placeholders)
-  # to ensure we always get a clean substitution even if the file was previously
-  # written with stale or missing values.
-  SOURCE_SKILL="/app/config/workspace/skills/m365-graph-gateway/SKILL.md"
-  if [[ -f "${SOURCE_SKILL}" ]]; then
-    echo "Resolving GRAPH_MCP_URL in m365-graph-gateway SKILL.md ..."
+SOURCE_SKILL="/app/config/workspace/skills/m365-graph-gateway/SKILL.md"
+if [[ -f "${SOURCE_SKILL}" ]]; then
+  mkdir -p "$(dirname "${SKILL_FILE}")"
+  if [[ -n "${GRAPH_MCP_URL:-}" ]]; then
+    echo "Refreshing m365-graph-gateway SKILL.md (with GRAPH_MCP_URL) ..."
     envsubst '${GRAPH_MCP_URL}' < "${SOURCE_SKILL}" > "${SKILL_FILE}.tmp" \
       && mv "${SKILL_FILE}.tmp" "${SKILL_FILE}"
+  else
+    echo "Refreshing m365-graph-gateway SKILL.md ..."
+    cp "${SOURCE_SKILL}" "${SKILL_FILE}"
   fi
 fi
 
