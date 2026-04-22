@@ -25,7 +25,7 @@ NAMING_EXPORT_KEYS = [
 def resolve_and_validate_naming(
     repo_root: Path, env_map: dict[str, str], env_name: str
 ) -> dict[str, str]:
-    script = repo_root / "scripts" / "naming-contract.sh"
+    script = repo_root / "platform" / "scripts" / "naming_contract.sh"
     if not script.exists():
         raise FileNotFoundError(f"Missing naming contract script: {script}")
 

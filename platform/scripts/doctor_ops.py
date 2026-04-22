@@ -77,7 +77,7 @@ def doctor(repo_root: Path, env_name: str, user: str | None) -> int:
             _print_result(False, "Naming contract validation", str(exc))
             failures += 1
 
-    validate_cmd = ["./scripts/validate-config.py", "--env", env_name]
+    validate_cmd = ["./platform/scripts/validate_config.py", "--env", env_name]
     if user:
         validate_cmd.extend(["--user", user])
     validate_ok = run(validate_cmd, repo_root) == 0

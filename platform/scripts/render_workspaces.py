@@ -160,7 +160,7 @@ def render_board_execution_skill(board: dict) -> str:
         "   - `decisionRequest`",
         "2. Use the `bash` tool to write that JSON to a temp file inside the container.",
         "3. Use the `bash` tool to run the local board runner:",
-        f"   - `node /app/scripts/run-board-meeting.mjs --board {board_id} --agenda <temp-agenda-path> --output <temp-output-path> --trace-output <temp-trace-path> --packet-mode brief --min-attendees 3 --max-attendees 3 --selection-timeout 180 --member-timeout 120 --chairman-timeout 180`",
+        f"   - `node /app/platform/scripts/run_board_meeting.mjs --board {board_id} --agenda <temp-agenda-path> --output <temp-output-path> --trace-output <temp-trace-path> --packet-mode brief --min-attendees 3 --max-attendees 3 --selection-timeout 180 --member-timeout 120 --chairman-timeout 180`",
         "4. Read the generated markdown packet from the temp output path using `bash` and return it to the user.",
         "5. If needed for verification, inspect the trace JSON at `<temp-trace-path>`.",
         "6. If execution fails, say that board execution failed and report the actual error. Do not invent attendee views or votes.",
