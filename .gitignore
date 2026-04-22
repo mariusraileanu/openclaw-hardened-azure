@@ -50,5 +50,8 @@ Thumbs.db
 *.swo
 *~
 
+# Board domain data (member evidence, KB, meetings, board definitions)
+config/boards/
+
 # Tool config
 .opencode/
