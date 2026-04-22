@@ -51,7 +51,7 @@
   "tools": {
     "deny": ["image_generate", "music_generate", "video_generate"],
     "exec": {
-      "host": "gateway"
+      "host": "auto"
     },
     "web": {
       "search": {
@@ -161,6 +161,9 @@
         "enabled": true,
         "config": {
           "vaultMode": "bridge",
+          "vault": {
+            "path": "/app/data/.openclaw/wiki/main"
+          },
           "bridge": {
             "enabled": true,
             "readMemoryArtifacts": true,

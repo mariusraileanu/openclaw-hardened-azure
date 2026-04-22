@@ -10,32 +10,18 @@
       "Assume technical audience"
     ]
   },
-  "profiles": ["boards-basic"],
   "boards": {
     "enabled": ["fertility", "strategic-health"]
   },
   "skills": {
-    "baseWorkspace": {
-      "allow": [
-        "m365-graph-gateway",
-        "prototype-webapp",
-        "self-improving-agent"
-      ]
-    },
     "chairman": {
-      "allow": [
-        "board-deliberation",
-        "board-meeting-execution"
-      ]
+      "allow": ["board-deliberation", "board-meeting-execution"]
     },
     "members": {
-      "allow": [
-        "board-deliberation"
-      ]
+      "allow": ["board-deliberation"]
     }
   },
   "plugins": {
-    "enable": ["tavily", "board-router"],
-    "disable": []
+    "enable": ["board-router"]
   }
 }

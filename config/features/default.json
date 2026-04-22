@@ -1,22 +1,20 @@
 {
   "version": 1,
-  "profiles": [],
-  "boards": {
-    "enabled": []
-  },
   "skills": {
     "baseWorkspace": {
-      "allow": []
-    },
-    "chairman": {
-      "allow": []
-    },
-    "members": {
-      "allow": []
+      "allow": [
+        "m365-graph-gateway",
+        "prototype-webapp",
+        "self-improving-agent"
+      ]
     }
   },
   "plugins": {
-    "enable": [],
-    "disable": []
+    "enable": [
+      "active-memory",
+      "memory-core",
+      "memory-wiki",
+      "tavily"
+    ]
   }
 }

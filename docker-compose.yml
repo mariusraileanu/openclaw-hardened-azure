@@ -2,11 +2,14 @@ services:
   openclaw:
     env_file: config/env/dev.env
     environment:
-      # Inject user profile for local dev (no USER_SLUG needed).
-      # render_workspaces.py uses this to generate USER.md and skip BOOTSTRAP.md.
-      - OPENCLAW_FEATURES_JSON={"user":{"name":"Marius Raileanu","preferredName":"Marius","timezone":"Asia/Dubai","role":"Managing Director, Digital Health","notes":["Prefers concise answers with clear next steps","Assume technical audience"]}}
+      # Inject user profile + board config for local dev (no USER_SLUG needed).
+      # render_workspaces.py uses the user section to generate USER.md and skip BOOTSTRAP.md.
+      # Skills and plugins come from default.json; only user-specific overrides here.
+      - OPENCLAW_FEATURES_JSON={"user":{"name":"Marius Raileanu","preferredName":"Marius","timezone":"Asia/Dubai","role":"Managing Director, Digital Health","notes":["Prefers concise answers with clear next steps","Assume technical audience"]},"boards":{"enabled":["fertility","strategic-health"]},"skills":{"chairman":{"allow":["board-deliberation","board-meeting-execution"]},"members":{"allow":["board-deliberation"]}},"plugins":{"enable":["board-router"]}}
       # M365 gateway running on the host (macOS Docker → host.docker.internal).
       - GRAPH_MCP_URL=http://host.docker.internal:18790
+      # Tavily web search (leave empty to disable; fill in to enable).
+      - TAVILY_API_KEY=
       # Wipe sessions on every restart so stale context never persists.
       - OPENCLAW_FRESH_SESSION=true
     build:

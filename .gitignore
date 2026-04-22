@@ -50,9 +50,8 @@ Thumbs.db
 *.swo
 *~
 
-# Board feature (domain data, plugin, scripts, feature profile, docs)
+# Board feature (domain data, plugin, scripts, docs)
 config/boards/
-config/features/profiles/boards-basic.json
 plugins/board-router/
 platform/scripts/member_evidence.mjs
 platform/scripts/member_evidence.py
