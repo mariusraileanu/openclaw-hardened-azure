@@ -27,6 +27,7 @@ RUN ln -sf /app/openclaw.mjs /usr/local/bin/openclaw
 COPY config/openclaw.json.template /app/config/openclaw.json.template
 COPY config/boards/ /app/config/boards/
 COPY config/features/ /app/config/features/
+COPY config/users/*.features.json config/users/.gitkeep /app/config/users/
 COPY platform/scripts/build_config.py /app/platform/scripts/build_config.py
 COPY platform/scripts/feature_config.py /app/platform/scripts/feature_config.py
 COPY platform/scripts/member_evidence.mjs /app/platform/scripts/member_evidence.mjs

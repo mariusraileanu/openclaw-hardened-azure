@@ -9,6 +9,22 @@
       "type": "integer",
       "enum": [1]
     },
+    "user": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Full name of the user" },
+        "preferredName": { "type": "string", "description": "How the agent should address them" },
+        "timezone": { "type": "string", "description": "IANA timezone, e.g. Asia/Dubai" },
+        "role": { "type": "string", "description": "Role or title, e.g. CTO at Acme Corp" },
+        "notes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Work-style preferences and context hints"
+        }
+      },
+      "required": ["name", "timezone"],
+      "additionalProperties": false
+    },
     "profiles": {
       "type": "array",
       "items": { "type": "string" },

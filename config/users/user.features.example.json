@@ -1,5 +1,15 @@
 {
   "version": 1,
+  "user": {
+    "name": "Jane Doe",
+    "preferredName": "Jane",
+    "timezone": "America/New_York",
+    "role": "Engineering Lead",
+    "notes": [
+      "Prefers concise answers with clear next steps",
+      "Assume technical audience"
+    ]
+  },
   "profiles": [],
   "boards": {
     "enabled": ["fertility"]

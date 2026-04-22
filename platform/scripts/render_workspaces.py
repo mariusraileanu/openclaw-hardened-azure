@@ -356,6 +356,66 @@ def copy_if_missing(source: Path, dest: Path) -> None:
         shutil.copy2(source, dest)
 
 
+def _has_user_profile(feature_config: dict) -> bool:
+    """Return True if feature config includes a user profile with minimum fields."""
+    user = feature_config.get("user")
+    if not isinstance(user, dict):
+        return False
+    return bool(user.get("name")) and bool(user.get("timezone"))
+
+
+def _user_md_needs_generation(workspace: Path) -> bool:
+    """Return True if USER.md doesn't exist or still has template placeholders."""
+    user_md = workspace / "USER.md"
+    if not user_md.exists():
+        return True
+    content = user_md.read_text(encoding="utf-8")
+    return "<your-name>" in content or "<your-timezone>" in content
+
+
+def render_user_md(user_config: dict) -> str:
+    """Generate USER.md content from the user profile in feature config."""
+    name = user_config.get("name", "")
+    preferred = user_config.get("preferredName", name)
+    timezone = user_config.get("timezone", "")
+    role = user_config.get("role", "")
+    notes = user_config.get("notes", [])
+
+    lines = [
+        "# USER.md - About Your Human",
+        "",
+        f"- **Name:** {name}",
+        f"- **What to call them:** {preferred}",
+        f"- **Timezone:** {timezone}",
+        "- **Notes:**",
+    ]
+    if role:
+        lines.append(f"  - {role}")
+    for note in notes:
+        lines.append(f"  - {note}")
+    if not role and not notes:
+        lines.append("  - (no additional notes)")
+
+    lines.extend(
+        [
+            "",
+            "## Context",
+            "",
+            "- When preparing anything:",
+            "  - Default to **executive brief**: 3-5 bullets, one clear ask, one risk to watch.",
+            "  - Make numbers traceable to real sources (internal docs, dashboards, official stats).",
+            "  - Avoid internal jargon unless it's already standard in their materials.",
+            "  - Highlight how a decision or initiative reinforces the organization's strategic goals.",
+            "",
+            "---",
+            "",
+            "Remember: your job is to compress complexity into a small number of true, "
+            "actionable statements—with clear trade-offs and a credible path forward.",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
 def filter_workspace_skills(
     workspace: Path, allowed_skill_names: list[str], required_skill_names: list[str]
 ) -> None:
@@ -385,6 +445,17 @@ def write_base_workspace(
     allowlist = skill_allowlist(feature_config, "baseWorkspace")
     if allowlist is not None:
         filter_workspace_skills(workspace, allowlist, ["board-routing"])
+
+    # USER.md: generate from config if a user profile is present and the
+    # current file still has template placeholders (or doesn't exist).
+    if _has_user_profile(feature_config) and _user_md_needs_generation(workspace):
+        ensure_file(workspace / "USER.md", render_user_md(feature_config["user"]))
+
+    # BOOTSTRAP.md: delete if user profile exists (no conversational
+    # onboarding needed).  Otherwise leave it for the agent to handle.
+    bootstrap_path = workspace / "BOOTSTRAP.md"
+    if _has_user_profile(feature_config) and bootstrap_path.exists():
+        bootstrap_path.unlink()
 
     agents_file = workspace / "AGENTS.md"
     if agents_file.exists():
@@ -471,6 +542,7 @@ def write_common_files(
     graph_url: str,
     allowed_skill_names: list[str],
     required_skill_names: list[str],
+    feature_config: dict | None = None,
 ) -> None:
     source_heartbeat = base_workspace / "HEARTBEAT.md"
     if source_heartbeat.exists():
@@ -481,14 +553,30 @@ def write_common_files(
     source_tools = base_workspace / "TOOLS.md"
     copy_if_missing(source_tools, workspace / "TOOLS.md")
 
-    source_user = base_workspace / "USER.md"
-    copy_if_missing(source_user, workspace / "USER.md")
-
     source_memory = base_workspace / "MEMORY.md"
     copy_if_missing(source_memory, workspace / "MEMORY.md")
 
+    # USER.md: generate from config if a user profile exists (and USER.md
+    # still has template placeholders or doesn't exist yet).  Otherwise
+    # fall back to copying the template once.
+    fc = feature_config or {}
+    if _has_user_profile(fc) and _user_md_needs_generation(workspace):
+        ensure_file(workspace / "USER.md", render_user_md(fc["user"]))
+    else:
+        source_user = base_workspace / "USER.md"
+        copy_if_missing(source_user, workspace / "USER.md")
+
+    # BOOTSTRAP.md: skip entirely when a user profile is present (the
+    # agent already has what it needs).  Otherwise only copy on first
+    # creation — never recreate after the agent deletes it.
+    bootstrap_dest = workspace / "BOOTSTRAP.md"
+    if _has_user_profile(fc):
+        if bootstrap_dest.exists():
+            bootstrap_dest.unlink()
+    else:
+        copy_if_missing(base_workspace / "BOOTSTRAP.md", bootstrap_dest)
+
     filter_workspace_skills(workspace, allowed_skill_names, required_skill_names)
-    ensure_file(workspace / "BOOTSTRAP.md", "")
     refresh_m365_skill(base_workspace, workspace, graph_url)
     if "board-deliberation" in required_skill_names:
         ensure_file(
@@ -531,6 +619,7 @@ def render_board(
         graph_url,
         base_allowed_skills + chairman_allowed_skills,
         ["board-deliberation", "board-meeting-execution"],
+        feature_config,
     )
     write_chairman_skill(chairman_workspace, board)
     ensure_file(
@@ -553,6 +642,7 @@ def render_board(
             graph_url,
             base_allowed_skills + member_allowed_skills,
             ["board-deliberation"],
+            feature_config,
         )
         ensure_file(
             member_workspace / "IDENTITY.md",

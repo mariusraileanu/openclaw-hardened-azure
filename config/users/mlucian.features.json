@@ -1,5 +1,15 @@
 {
   "version": 1,
+  "user": {
+    "name": "Marius Raileanu",
+    "preferredName": "Marius",
+    "timezone": "Asia/Dubai",
+    "role": "Managing Director, Digital Health",
+    "notes": [
+      "Prefers concise answers with clear next steps",
+      "Assume technical audience"
+    ]
+  },
   "profiles": ["boards-basic"],
   "boards": {
     "enabled": ["fertility", "strategic-health"]

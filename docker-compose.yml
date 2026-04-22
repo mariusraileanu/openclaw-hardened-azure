@@ -1,6 +1,10 @@
 services:
   openclaw:
     env_file: config/env/dev.env
+    environment:
+      # Inject user profile for local dev (no USER_SLUG needed).
+      # render_workspaces.py uses this to generate USER.md and skip BOOTSTRAP.md.
+      - OPENCLAW_FEATURES_JSON={"user":{"name":"Marius Raileanu","preferredName":"Marius","timezone":"Asia/Dubai","role":"Managing Director, Digital Health","notes":["Prefers concise answers with clear next steps","Assume technical audience"]}}
     build:
       context: .
       dockerfile: Dockerfile.wrapper
