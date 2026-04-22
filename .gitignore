@@ -50,8 +50,15 @@ Thumbs.db
 *.swo
 *~
 
-# Board domain data (member evidence, KB, meetings, board definitions)
+# Board feature (domain data, plugin, scripts, feature profile, docs)
 config/boards/
+config/features/profiles/boards-basic.json
+plugins/board-router/
+platform/scripts/member_evidence.mjs
+platform/scripts/member_evidence.py
+platform/scripts/run_board_meeting.mjs
+platform/scripts/validate_member_evidence.py
+docs/runbooks/board-meetings.md
 
 # Tool config
 .opencode/
