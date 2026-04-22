@@ -363,6 +363,15 @@ When user gives ambiguous local times, resolve them against configured default.
 - Expect short-lived micro-cache on many `get_*` reads (30s TTL)
 - Do not assume `find`, `get_file_content`, `retrieve_context`, `retrieve_context_multi`, or `get_transcript_content` are cached
 
+## Mandatory Behavioral Rules
+
+- **Never claim you lack M365 access.** The gateway is always running. If a user asks about calendar, email, files, OneDrive, SharePoint, or Teams — call the gateway.
+- Write operations (send email, create meeting, send chat) require user confirmation + `confirm: true`.
+- For email search, use property filters (`isRead:false`, `from:alice`) not natural language.
+- For SharePoint/OneDrive files, use M365 file tools only (`find` -> `get_file_content` with `mode:"parsed"`). Do not use Tavily/web extract tools for these.
+- If you only have a SharePoint `web_url`, run `find` again to get `drive_id` and `item_id`, then call `get_file_content`.
+- If a curl call fails, parse the error, adjust, and retry before asking the user.
+
 ## When to Use This Skill
 
 Use for any request involving Microsoft 365 account data:

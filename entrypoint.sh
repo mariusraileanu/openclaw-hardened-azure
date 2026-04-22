@@ -44,6 +44,15 @@ if [[ ! -d "${OPENCLAW_STATE_DIR}/workspace" ]]; then
   cp -r /app/config/workspace "${OPENCLAW_STATE_DIR}/workspace"
 fi
 
+# Refresh AGENTS.md from image source on every boot to pick up structural
+# changes (e.g. slimmed M365 section) on existing NFS workspaces.
+# Must run BEFORE render_workspaces.py which appends the Board Access section.
+AGENTS_FILE="${OPENCLAW_STATE_DIR}/workspace/AGENTS.md"
+SOURCE_AGENTS="/app/config/workspace/AGENTS.md"
+if [[ -f "${SOURCE_AGENTS}" ]]; then
+  cp "${SOURCE_AGENTS}" "${AGENTS_FILE}"
+fi
+
 echo "Refreshing board workspaces and base board-routing rules ..."
 /app/platform/scripts/render_workspaces.py
 
@@ -95,29 +104,9 @@ if [[ -f "${SOURCE_CONTRACT}" ]]; then
   cp "${SOURCE_CONTRACT}" "${CONTRACT_FILE}"
 fi
 
-# Always resolve env var placeholders in AGENTS.md on every boot.
-# AGENTS.md is loaded on every request and contains ${GRAPH_MPC_URL} placeholders
-# for the M365 gateway instructions.  Use the *rendered* file (not the image
-# source) so that content appended by render-agent-workspaces.py (e.g. the
-# Board Access section) is preserved.
-AGENTS_FILE="${OPENCLAW_STATE_DIR}/workspace/AGENTS.md"
-if [[ -n "${GRAPH_MCP_URL:-}" ]] && [[ -f "${AGENTS_FILE}" ]]; then
-  echo "Resolving GRAPH_MCP_URL in AGENTS.md ..."
-  envsubst '${GRAPH_MCP_URL}' < "${AGENTS_FILE}" > "${AGENTS_FILE}.tmp" \
-    && mv "${AGENTS_FILE}.tmp" "${AGENTS_FILE}"
-fi
-
-# Always refresh HEARTBEAT.md from the image source so periodic checks keep
-# using the canonical probe ports and procedures.
-HEARTBEAT_FILE="${OPENCLAW_STATE_DIR}/workspace/HEARTBEAT.md"
-SOURCE_HEARTBEAT="/app/config/workspace/HEARTBEAT.md"
-if [[ -f "${SOURCE_HEARTBEAT}" ]]; then
-  cp "${SOURCE_HEARTBEAT}" "${HEARTBEAT_FILE}"
-fi
-
 # Clean up legacy workspace/instructions/ directory from NFS.
-# M365 gateway instructions are now in AGENTS.md only; the separate
-# instructions/ dir was redundant and wasted context-window tokens.
+# M365 gateway instructions now live in the m365-graph-gateway SKILL.md;
+# the separate instructions/ dir was redundant.
 LEGACY_INSTR_DIR="${OPENCLAW_STATE_DIR}/workspace/instructions"
 if [[ -d "${LEGACY_INSTR_DIR}" ]]; then
   echo "Removing legacy workspace/instructions/ dir (content lives in AGENTS.md)..."
