@@ -5,6 +5,10 @@ services:
       # Inject user profile for local dev (no USER_SLUG needed).
       # render_workspaces.py uses this to generate USER.md and skip BOOTSTRAP.md.
       - OPENCLAW_FEATURES_JSON={"user":{"name":"Marius Raileanu","preferredName":"Marius","timezone":"Asia/Dubai","role":"Managing Director, Digital Health","notes":["Prefers concise answers with clear next steps","Assume technical audience"]}}
+      # M365 gateway running on the host (macOS Docker → host.docker.internal).
+      - GRAPH_MCP_URL=http://host.docker.internal:18790
+      # Wipe sessions on every restart so stale context never persists.
+      - OPENCLAW_FRESH_SESSION=true
     build:
       context: .
       dockerfile: Dockerfile.wrapper

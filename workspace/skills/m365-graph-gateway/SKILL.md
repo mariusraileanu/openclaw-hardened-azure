@@ -36,14 +36,15 @@ If you catch yourself claiming "no M365 access," stop and call the gateway.
 | `${GRAPH_MCP_URL}/health` | GET | Service health check |
 | `${GRAPH_MCP_URL}/auth/status` | GET | HTTP auth status |
 
-## Mandatory Contract Source
+## Contract Reference (on-demand)
 
-Always read and treat this file as the canonical contract before tool calls:
+The full tool contract with response shapes, error codes, and edge cases:
 
 - `workspace/skills/m365-graph-gateway/references/TOOL_CONTRACT.md`
 
-If anything in this skill conflicts with the contract, follow the contract.
-Do not guess tool names, args, or response fields.
+**Do not read this file upfront.** The parameter schemas below are sufficient
+for most calls. Only consult the contract when you encounter an unexpected
+response shape, an unfamiliar error code, or need detailed field definitions.
 
 ## Startup Checklist Per Session
 
@@ -81,29 +82,12 @@ curl -s -X POST ${GRAPH_MCP_URL}/mcp \
 
 Show `verification_uri` and `user_code`, then poll `auth status`.
 
-## Identity Binding Requirements
+## Identity & Security Notes
 
-The gateway enforces strict identity pinning. Ensure runtime config includes:
-
-- `EXPECTED_AAD_OBJECT_ID` (required)
-- `USER_SLUG` (required)
-
-Use `auth` `status` response fields to validate:
-
-- `expected_object_id`
-- `actual_object_id`
-- `identity_match`
-- `identity_binding_status` (`valid`, `invalid`, `missing`)
-
-If binding is invalid, do not proceed with user-data operations.
-
-## JSON-RPC Lifecycle and Transport Notes
-
-- Protocol clients must send `initialize` first and then `notifications/initialized`
-- `ping` is supported
-- Notifications return HTTP 204 (no body)
-- Batch requests are not supported
-- `/mcp` request body limit: 1 MB
+- If `auth` `status` shows `identity_binding_status` is not `valid`, stop and report the issue.
+- API key auth is optional (`GRAPH_MCP_API_KEY`). If configured, add `Authorization: Bearer <key>` to `/mcp` calls.
+- `/health` and `/auth/status` are never API-key gated.
+- Rate limit: 100 requests / 60-second sliding window on `/mcp`.
 
 ## Auth Recovery (Mandatory)
 
@@ -121,43 +105,195 @@ equal to `AUTH_EXPIRED` or `AUTH_REQUIRED`:
 Do not treat 7-day re-auth prompts as outages; this is expected Conditional
 Access behavior.
 
-## Security and Runtime Notes
+## Tool Catalog — Quick Reference (22 tools)
 
-- API key auth is optional and controlled by `GRAPH_MCP_API_KEY`
-- If key is configured, include `Authorization: Bearer <key>`
-- `/health` and `/auth/status` are never API-key gated
-- `/mcp` default rate limit: 100 requests / 60-second sliding window
-- Common HTTP failures:
-  - 401 unauthorized
-  - 413 body too large
-  - 429 rate limit exceeded
+Use **exactly** these parameter names. Do not invent alternatives.
+For full response shapes and edge cases, read `TOOL_CONTRACT.md`.
 
-JSON-RPC errors are returned in HTTP 200 responses.
+### auth
 
-## Tool Catalog (22 tools)
+| Param | Type | Req | Values |
+|-------|------|-----|--------|
+| `action` | enum | yes | `login`, `login_device`, `logout`, `whoami`, `status` |
 
-1. `auth`
-2. `find`
-3. `get_email`
-4. `get_event`
-5. `get_email_thread`
-6. `get_file_metadata`
-7. `get_file_content`
-8. `compose_email`
-9. `schedule_meeting`
-10. `respond_to_meeting`
-11. `audit_list`
-12. `list_chats`
-13. `get_chat`
-14. `list_chat_messages`
-15. `get_chat_message`
-16. `send_chat_message`
-17. `resolve_meeting`
-18. `list_meeting_transcripts`
-19. `get_meeting_transcript`
-20. `get_transcript_content`
-21. `retrieve_context`
-22. `retrieve_context_multi`
+### find
+
+| Param | Type | Req | Description |
+|-------|------|-----|-------------|
+| `query` | string | yes | Search text (min 1 char) |
+| `entity_types` | string[] | no | `"mail"`, `"files"`, `"events"` (default: all) |
+| `start_date` | string | no | ISO 8601 datetime — enables CalendarView for events |
+| `end_date` | string | no | ISO 8601 datetime — required with `start_date` |
+| `top` | integer | no | Max results 1-50 (default 10) |
+| `kql` | string | no | Raw KQL query (overrides `query`) |
+| `mailbox_user` | string | no | UPN/email for shared mailbox/calendar |
+| `max_chars` | integer | no | Max output chars 1-50000 |
+
+### get_email
+
+| Param | Type | Req | Description |
+|-------|------|-----|-------------|
+| `message_id` | string | yes | Email ID from `find` |
+| `include_full` | boolean | no | Expands body, recipients, conversation_id |
+| `mailbox_user` | string | no | Shared mailbox UPN |
+
+### get_event
+
+| Param | Type | Req | Description |
+|-------|------|-----|-------------|
+| `event_id` | string | yes | Event ID from `find` |
+| `include_full` | boolean | no | Expands attendees, body, online meeting details |
+| `mailbox_user` | string | no | Shared calendar UPN |
+
+### get_email_thread
+
+| Param | Type | Req | Description |
+|-------|------|-----|-------------|
+| `conversation_id` | string | one of two | From `get_email` with `include_full` |
+| `message_id` | string | one of two | Auto-resolves conversation_id |
+| `top` | integer | no | Max messages 1-50 (default 10) |
+| `include_full` | boolean | no | Expands body, recipients |
+| `mailbox_user` | string | no | Shared mailbox UPN |
+
+### get_file_metadata
+
+| Param | Type | Req | Description |
+|-------|------|-----|-------------|
+| `drive_id` | string | yes | From `find` file results |
+| `item_id` | string | yes | From `find` file results |
+| `include_full` | boolean | no | Expands created/modified by, parent ref |
+
+### get_file_content
+
+| Param | Type | Req | Description |
+|-------|------|-----|-------------|
+| `drive_id` | string | yes | From `find` file results |
+| `item_id` | string | yes | From `find` file results |
+| `mode` | enum | no | `metadata` (default), `inline`, `binary`, `parsed` |
+| `max_chars` | integer | no | Max chars 1-50000 (inline/parsed) |
+
+### compose_email
+
+| Param | Type | Req | Description |
+|-------|------|-----|-------------|
+| `mode` | enum | yes | `draft`, `send`, `reply`, `reply_all` |
+| `to` | string/string[] | for draft/send | Recipient(s) |
+| `subject` | string | for draft/send | Subject line |
+| `body_html` | string | yes | HTML body |
+| `message_id` | string | for reply modes | ID of message to reply to |
+| `confirm` | boolean | no | `true` to execute send/reply |
+| `mailbox_user` | string | no | Shared mailbox UPN |
+
+### schedule_meeting
+
+| Param | Type | Req | Description |
+|-------|------|-----|-------------|
+| `subject` | string | yes | Meeting subject |
+| `attendees` | string[] | no | Email addresses |
+| `start` / `end` | string | option A | Explicit ISO 8601 with offset |
+| `preferred_start` / `preferred_end` | string | option B | Window for auto free-slot |
+| `duration_minutes` | integer | no | 1-480, default 60 |
+| `timezone` | string | no | IANA timezone |
+| `teams_meeting` | boolean | no | `true` for Teams link |
+| `agenda` | string | no | Agenda text |
+| `confirm` | boolean | no | `true` to create |
+| `mailbox_user` | string | no | Shared calendar UPN |
+
+### respond_to_meeting
+
+| Param | Type | Req | Description |
+|-------|------|-----|-------------|
+| `event_id` | string | yes | Event ID |
+| `action` | enum | yes | `accept`, `decline`, `tentativelyAccept`, `cancel`, `reply_all_draft` |
+| `comment` | string | no | Comment with response |
+| `confirm` | boolean | no | `true` to execute |
+| `mailbox_user` | string | no | Shared calendar UPN |
+
+### audit_list
+
+| Param | Type | Req | Description |
+|-------|------|-----|-------------|
+| `limit` | integer | no | 1-1000, default 100 |
+
+### list_chats
+
+| Param | Type | Req | Description |
+|-------|------|-----|-------------|
+| `top` | integer | no | 1-50, default 10 |
+| `chat_type` | enum | no | `oneOnOne`, `group`, `meeting` |
+| `expand_members` | boolean | no | Include member list |
+| `include_full` | boolean | no | Expands tenant, web URL, meeting info |
+
+### get_chat
+
+| Param | Type | Req | Description |
+|-------|------|-----|-------------|
+| `chat_id` | string | yes | Chat ID |
+| `include_full` | boolean | no | Expands tenant, meeting info, members |
+
+### list_chat_messages / get_chat_message
+
+| Param | Type | Req | Description |
+|-------|------|-----|-------------|
+| `chat_id` | string | yes | Chat ID |
+| `message_id` | string | get only | Message ID |
+| `top` | integer | no | 1-50, default 10 (list only) |
+| `include_full` | boolean | no | Expands importance, web URL, attachments |
+
+### send_chat_message
+
+| Param | Type | Req | Description |
+|-------|------|-----|-------------|
+| `chat_id` | string | yes | Existing chat ID |
+| `content` | string | yes | Plain text message |
+| `confirm` | boolean | no | `true` to send |
+
+### resolve_meeting
+
+| Param | Type | Req | Description |
+|-------|------|-----|-------------|
+| `join_web_url` | string | yes | Teams meeting join URL |
+
+### list_meeting_transcripts / get_meeting_transcript
+
+| Param | Type | Req | Description |
+|-------|------|-----|-------------|
+| `meeting_id` | string | yes | From `resolve_meeting` |
+| `transcript_id` | string | get only | Transcript ID |
+
+### get_transcript_content
+
+| Param | Type | Req | Description |
+|-------|------|-----|-------------|
+| `meeting_id` | string | yes | Meeting ID |
+| `transcript_id` | string | yes | Transcript ID |
+| `max_chars` | integer | no | 1-50000 |
+
+### retrieve_context
+
+| Param | Type | Req | Description |
+|-------|------|-----|-------------|
+| `query` | string | yes | Natural language (max 1500 chars) |
+| `data_source` | enum | no | `sharePoint` (default), `oneDriveBusiness`, `externalItem` |
+| `max_results` | integer | no | 1-25, default 10 |
+| `filter_expression` | string | no | Raw KQL filter |
+| `filter_author` | string | no | Author name |
+| `filter_file_extension` | string | no | e.g. `docx`, `pdf` |
+| `filter_filename` | string | no | Partial match |
+| `filter_path` | string | no | SharePoint/OneDrive path |
+| `filter_site_id` | string | no | SharePoint Site ID |
+| `filter_title` | string | no | Document title |
+| `filter_modified_after` | string | no | ISO date |
+| `filter_join` | enum | no | `AND` (default), `OR` |
+
+### retrieve_context_multi
+
+| Param | Type | Req | Description |
+|-------|------|-----|-------------|
+| `queries` | string[] | yes | 1-20 queries, each max 1500 chars |
+| `data_source` | enum | no | Same as `retrieve_context` |
+| `max_results` | integer | no | 1-25, default 10 |
+| (filter params) | | no | Same as `retrieve_context`, shared across all queries |
 
 ## Write Safety Rules
 
@@ -269,77 +405,6 @@ Handle best-effort outcomes gracefully:
 - `MEETING_NOT_RESOLVABLE`
 - `TRANSCRIPT_NOT_AVAILABLE` / `available: false`
 
-## Workflow Examples (Contract-Aligned)
-
-These mirror the canonical examples in `TOOL_CONTRACT.md`.
-
-### Show meetings on Monday
-
-1. Resolve relative date to concrete ISO range.
-2. Call `find` with `entity_types: ["events"]`, `start_date`, `end_date`.
-
-### What is on my calendar this week
-
-Call `find` with `entity_types: ["events"]` and week boundary dates.
-
-### Find emails from John about budget and reply
-
-1. `find` for mail
-2. `get_email` with `include_full: true`
-3. `get_email_thread` for full conversation context
-4. `compose_email` in `reply` mode with confirm flow
-
-### Prepare for a specific meeting
-
-1. `find` events in the target time window
-2. `get_event` with `include_full: true`
-3. Additional `find` over mail/files using subject or attendee context
-
-### Schedule a 30-minute Teams call
-
-Use `schedule_meeting` with `preferred_start`, `preferred_end`,
-`duration_minutes`, and `teams_meeting: true`, then confirm.
-
-### Read a found document
-
-1. `find` files
-2. `get_file_content` in default metadata mode first
-3. Use `download_url`, or call inline/binary mode only when needed
-
-### Catch up on an email thread
-
-1. `find` mail
-2. `get_email` with `include_full: true` for `conversation_id`
-3. `get_email_thread`
-
-### Get transcript from a recent meeting
-
-1. `list_chats` with `chat_type: "meeting"`
-2. `get_chat` to obtain `join_web_url`
-3. `resolve_meeting`
-4. `list_meeting_transcripts`
-5. `get_transcript_content`
-
-### Understand what was discussed in a Teams chat
-
-1. `list_chats`
-2. `list_chat_messages`
-3. Optionally `get_chat_message` for a specific message
-
-### Send a message to a Teams chat
-
-1. Identify chat via `list_chats`
-2. `send_chat_message` with confirm flow
-
-### Find semantic context across SharePoint/OneDrive
-
-Use retrieval tools when the user asks for grounding context, not strict search hits:
-
-1. `retrieve_context` for one query
-2. `retrieve_context_multi` for up to 20 queries in one batch
-
-Use optional KQL/structured filters as defined in the contract.
-
 ## Troubleshooting Sequence
 
 1. Verify `${GRAPH_MCP_URL}/health`
@@ -371,15 +436,5 @@ When user gives ambiguous local times, resolve them against configured default.
 - For SharePoint/OneDrive files, use M365 file tools only (`find` -> `get_file_content` with `mode:"parsed"`). Do not use Tavily/web extract tools for these.
 - If you only have a SharePoint `web_url`, run `find` again to get `drive_id` and `item_id`, then call `get_file_content`.
 - If a curl call fails, parse the error, adjust, and retry before asking the user.
-
-## When to Use This Skill
-
-Use for any request involving Microsoft 365 account data:
-
-- calendar/schedule/meetings
-- email search/read/reply/send
-- OneDrive/SharePoint file discovery/content
-- Teams chats and messages
-- Teams meeting transcript retrieval
 
 For purely conceptual requests with no live M365 data need, normal reasoning is sufficient.

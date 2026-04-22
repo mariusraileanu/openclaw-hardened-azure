@@ -151,6 +151,14 @@ chmod 644 /etc/profile.d/openclaw.sh
 # so without this seed the user only sees the heartbeat conversation.
 SESSIONS_DIR="${OPENCLAW_STATE_DIR}/agents/main/sessions"
 SESSIONS_JSON="${SESSIONS_DIR}/sessions.json"
+
+# Force a blank session on every boot (local dev).  This clears stale
+# context that persists across restarts due to continuation-skip.
+if [[ "${OPENCLAW_FRESH_SESSION:-}" == "true" ]] && [[ -d "${SESSIONS_DIR}" ]]; then
+  echo "OPENCLAW_FRESH_SESSION: wiping sessions for a clean start ..."
+  rm -rf "${SESSIONS_DIR}"
+fi
+
 _need_seed=false
 if [[ ! -f "${SESSIONS_JSON}" ]]; then
   _need_seed=true
