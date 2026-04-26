@@ -34,9 +34,6 @@ type BoardRunnerModule = {
 const DEFAULT_BOARD_RUNNER_CANDIDATES = [
   "/app/platform/scripts/run_board_meeting.mjs",
   path.resolve(process.cwd(), "platform", "scripts", "run_board_meeting.mjs"),
-  // Legacy paths (pre-restructure)
-  "/app/scripts/run-board-meeting.mjs",
-  path.resolve(process.cwd(), "scripts", "run-board-meeting.mjs"),
 ];
 
 let boardRunnerPromise: Promise<BoardRunnerModule> | null = null;

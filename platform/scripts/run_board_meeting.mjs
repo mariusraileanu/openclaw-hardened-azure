@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { spawn } from 'node:child_process';
@@ -13,7 +14,7 @@ const runningInsideContainer = process.env.OPENCLAW_CONFIG_FILE?.startsWith('/ap
 
 function usage() {
   console.error(
-    'Usage: node scripts/run-board-meeting.mjs --board fertility --agenda board-meetings/fertility-sample-agenda.json [--output /tmp/result.md] [--trace-output /tmp/result.trace.json] [--packet-mode full|brief] [--min-attendees 3] [--max-attendees 5] [--selection-timeout 300] [--member-timeout 180] [--chairman-timeout 300]'
+    'Usage: node platform/scripts/run_board_meeting.mjs --board fertility --agenda /tmp/fertility-agenda.json [--output /tmp/result.md] [--trace-output /tmp/result.trace.json] [--packet-mode full|brief] [--min-attendees 3] [--max-attendees 5] [--selection-timeout 300] [--member-timeout 180] [--chairman-timeout 300]'
   );
   process.exit(1);
 }
@@ -631,10 +632,10 @@ export async function runBoardMeeting(argsInput) {
   const agendaPayload = normalizeAgenda(JSON.parse(await fs.readFile(agendaPath, 'utf8')));
   const outputPath = args.output
     ? path.resolve(process.cwd(), args.output)
-    : path.resolve(repoRoot, 'config', 'boards', 'meetings', `${agendaPayload.meetingId}.result.md`);
+    : path.resolve(os.tmpdir(), 'openclaw-board-meetings', `${agendaPayload.meetingId}.result.md`);
   const traceOutputPath = args.traceOutput
     ? path.resolve(process.cwd(), args.traceOutput)
-    : path.resolve(repoRoot, 'config', 'boards', 'meetings', `${agendaPayload.meetingId}.trace.json`);
+    : path.resolve(os.tmpdir(), 'openclaw-board-meetings', `${agendaPayload.meetingId}.trace.json`);
 
   const runId = `${Date.now()}`;
   const runtime = await createMeetingRuntime(runId);

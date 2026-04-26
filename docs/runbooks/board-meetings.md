@@ -15,12 +15,33 @@ export OPENCLAW_BOARDS="fertility,strategic-health"
 
 ## Sample Fertility Meeting
 
-Use the provided sample agenda:
+Create a temporary agenda file:
 
 ```bash
-node scripts/run-board-meeting.mjs \
+cat >/tmp/fertility-agenda.json <<'JSON'
+{
+  "meetingId": "fertility-local-test-001",
+  "boardId": "fertility",
+  "agendaTopic": "National fertility pathway redesign with AI-supported triage and value-based reimbursement",
+  "agendaSummary": "Evaluate whether the health system should pilot a redesigned fertility pathway that combines AI-assisted intake triage, standardized clinical protocols across providers, and value-based reimbursement tied to outcomes and patient experience.",
+  "context": [
+    "The proposed pilot would launch across a limited set of providers before wider scale-up.",
+    "The reform aims to reduce time-to-treatment, improve patient navigation, and increase consistency of care quality.",
+    "AI support would be used for intake, pathway routing, and patient communications, but not autonomous diagnosis.",
+    "Payment reform would shift part of reimbursement toward outcomes, continuity, and patient experience metrics.",
+    "The chairman should choose only the members most relevant to this topic."
+  ],
+  "decisionRequest": "Should the board recommend approval, rejection, deferment, or request_more_analysis for this pilot? If approval is recommended, specify guardrails and next actions."
+}
+JSON
+```
+
+Then run the board meeting:
+
+```bash
+node platform/scripts/run_board_meeting.mjs \
   --board fertility \
-  --agenda board-meetings/fertility-sample-agenda.json
+  --agenda /tmp/fertility-agenda.json
 ```
 
 This runs a real board-meeting flow using the installed OpenClaw runtime:
@@ -31,16 +52,17 @@ This runs a real board-meeting flow using the installed OpenClaw runtime:
 - selected member agents cast final votes
 - the chairman issues the final decision packet
 
-By default the runner writes the decision packet to:
+By default the runner writes generated artifacts to:
 
-- `board-meetings/fertility-local-test-001.result.md`
+- `/tmp/openclaw-board-meetings/fertility-local-test-001.result.md`
+- `/tmp/openclaw-board-meetings/fertility-local-test-001.trace.json`
 
 You can override the output path:
 
 ```bash
-node scripts/run-board-meeting.mjs \
+node platform/scripts/run_board_meeting.mjs \
   --board fertility \
-  --agenda board-meetings/fertility-sample-agenda.json \
+  --agenda /tmp/fertility-agenda.json \
   --output /tmp/fertility-decision-packet.md \
   --trace-output /tmp/fertility-decision-trace.json
 ```
@@ -48,9 +70,9 @@ node scripts/run-board-meeting.mjs \
 For a faster local validation run, constrain the meeting size and per-call timeouts:
 
 ```bash
-node scripts/run-board-meeting.mjs \
+node platform/scripts/run_board_meeting.mjs \
   --board fertility \
-  --agenda board-meetings/fertility-sample-agenda.json \
+  --agenda /tmp/fertility-agenda.json \
   --output /tmp/fertility-decision-packet.md \
   --trace-output /tmp/fertility-decision-trace.json \
   --packet-mode brief \
