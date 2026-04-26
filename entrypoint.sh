@@ -57,15 +57,9 @@ echo "Refreshing board workspaces and base board-routing rules ..."
 /app/platform/scripts/render_workspaces.py
 
 if [[ -d "/app/plugins/board-router" ]]; then
-  # Remove any stale installed copy so `plugins install` can overwrite cleanly.
-  # The data volume persists across container restarts; without this, the
-  # install command errors with "plugin already exists".
+  echo "Using baked-in board-router plugin from /app/plugins/board-router ..."
   rm -rf "${OPENCLAW_STATE_DIR}/extensions/board-router"
-  echo "Installing local board-router plugin ..."
-  openclaw plugins install /app/plugins/board-router || {
-    echo "FATAL: failed to install board-router plugin" >&2
-    exit 1
-  }
+  rm -rf "${OPENCLAW_STATE_DIR}/extensions"/.openclaw-install-stage-*
 fi
 
 # Copy dynamically-generated skills into /app/skills/ (the built-in skills
@@ -123,8 +117,6 @@ if [[ -d "${LEGACY_TAVILY}" ]]; then
   rm -rf "${LEGACY_TAVILY}"
 fi
 
-# Bridge env var naming: Azure KV sets OPENCLAW_GATEWAY_AUTH_TOKEN,
-# but the CLI --token flag reads OPENCLAW_GATEWAY_TOKEN (without _AUTH_).
 export OPENCLAW_GATEWAY_TOKEN="${OPENCLAW_GATEWAY_AUTH_TOKEN:-}"
 
 # Write env vars to a profile so interactive `exec` shells inherit them.
@@ -133,17 +125,27 @@ export OPENCLAW_GATEWAY_TOKEN="${OPENCLAW_GATEWAY_AUTH_TOKEN:-}"
 cat > /etc/profile.d/openclaw.sh <<PROFILE_EOF
 export OPENCLAW_CONFIG_FILE="${OPENCLAW_CONFIG_FILE}"
 export OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR}"
-export OPENCLAW_GATEWAY_TOKEN="${OPENCLAW_GATEWAY_TOKEN}"
 PROFILE_EOF
 chmod 644 /etc/profile.d/openclaw.sh
 } 2>/dev/null || true
+
+if [[ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]]; then
+  {
+    echo "export OPENCLAW_GATEWAY_TOKEN=\"${OPENCLAW_GATEWAY_TOKEN}\"" >> /etc/profile.d/openclaw.sh
+  } 2>/dev/null || true
+fi
 
 # Also write to .bashrc for non-login interactive shells (az containerapp exec)
 {
   echo "export OPENCLAW_CONFIG_FILE=\"${OPENCLAW_CONFIG_FILE}\""
   echo "export OPENCLAW_STATE_DIR=\"${OPENCLAW_STATE_DIR}\""
-  echo "export OPENCLAW_GATEWAY_TOKEN=\"${OPENCLAW_GATEWAY_TOKEN}\""
 } >> "${HOME}/.bashrc" 2>/dev/null || true
+
+if [[ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]]; then
+  {
+    echo "export OPENCLAW_GATEWAY_TOKEN=\"${OPENCLAW_GATEWAY_TOKEN}\""
+  } >> "${HOME}/.bashrc" 2>/dev/null || true
+fi
 
 # Pre-seed the main webchat session so the Control UI shows it even when
 # heartbeat.isolatedSession is true.  The heartbeat gets its own session

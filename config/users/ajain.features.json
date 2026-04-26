@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "user": {
+    "name": "Aman Kumar Jain",
+    "preferredName": "Aman",
+    "timezone": "Asia/Dubai",
+    "role": "Director of Product",
+    "notes": [
+      "Director-level role",
+      "Owns product portfolio and product strategy"
+    ]
+  },
+  "boards": {
+    "enabled": []
+  }
+}

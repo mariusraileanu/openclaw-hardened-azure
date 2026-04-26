@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "user": {
+    "name": "Bonny Lawrie",
+    "preferredName": "Bonny",
+    "timezone": "Asia/Dubai",
+    "role": "Advisor",
+    "notes": [
+      "Advisory role",
+      "Provides guidance within Chairman's Office"
+    ]
+  },
+  "boards": {
+    "enabled": []
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "user": {
+    "name": "Mansoor Ibrahim Ahmed Saeed Almansoori",
+    "preferredName": "Mansoor",
+    "timezone": "Asia/Dubai",
+    "role": "Chairman",
+    "notes": [
+      "Highest executive role",
+      "Overall strategic and institutional leadership"
+    ]
+  },
+  "boards": {
+    "enabled": []
+  }
+}

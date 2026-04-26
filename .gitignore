@@ -50,14 +50,10 @@ Thumbs.db
 *.swo
 *~
 
-# Board feature (domain data, plugin, scripts, docs)
-config/boards/
-plugins/board-router/
-platform/scripts/member_evidence.mjs
-platform/scripts/member_evidence.py
-platform/scripts/run_board_meeting.mjs
-platform/scripts/validate_member_evidence.py
-docs/runbooks/board-meetings.md
+# Generated local run artifacts
+board-meetings/
 
 # Tool config
 .opencode/
+
+.docs

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import json
 
@@ -83,11 +84,19 @@ def _prepare_context(repo_root: Path, env_name: str, user: str) -> dict[str, str
     env_map.update(resolved)
     env_map["AZURE_ENVIRONMENT"] = env_name
     env_map["USER_SLUG"] = user
-    env_map.setdefault("IMAGE_TAG", "latest")
-    env_map.setdefault(
-        "IMAGE_REF",
-        f"{env_map.get('AZURE_ACR_NAME', f'openclaw{env_name}acr')}.azurecr.io/openclaw-golden:{env_map['IMAGE_TAG']}",
-    )
+    image_tag = os.environ.get("IMAGE_TAG", "").strip() or env_map.get("IMAGE_TAG", "")
+    image_ref = os.environ.get("IMAGE_REF", "").strip() or env_map.get("IMAGE_REF", "")
+
+    if not image_tag:
+        image_tag = "latest"
+    env_map["IMAGE_TAG"] = image_tag
+
+    if not image_ref:
+        image_ref = (
+            f"{env_map.get('AZURE_ACR_NAME', f'openclaw{env_name}acr')}"
+            f".azurecr.io/openclaw-golden:{image_tag}"
+        )
+    env_map["IMAGE_REF"] = image_ref
     return env_map
 
 

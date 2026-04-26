@@ -24,7 +24,9 @@
     "maintenance": {
       "mode": "enforce",
       "pruneAfter": "30d",
-      "maxEntries": 500
+      "maxEntries": 500,
+      "maxDiskBytes": "25mb",
+      "highWaterBytes": "18mb"
     }
   },
   "agents": {
@@ -36,14 +38,47 @@
       "heartbeat": {
         "isolatedSession": true
       },
+      "sandbox": {
+        "mode": "off"
+      },
       "compaction": {
-        "mode": "default",
-        "notifyUser": true,
-        "identifierPolicy": "strict"
+        "mode": "safeguard",
+        "notifyUser": false,
+        "identifierPolicy": "strict",
+        "reserveTokensFloor": 60000,
+        "keepRecentTokens": 20000,
+        "qualityGuard": {
+          "enabled": true,
+          "maxRetries": 1
+        },
+        "postCompactionSections": [],
+        "memoryFlush": {
+          "enabled": true,
+          "softThresholdTokens": 6000,
+          "systemPrompt": "Session is nearing compaction. Preserve only durable preferences, decisions, commitments, identifiers, and unresolved tasks in memory/YYYY-MM-DD.md. Do not copy routine chat.",
+          "prompt": "Write durable notes to memory/YYYY-MM-DD.md when needed, then reply exactly NO_REPLY. If nothing durable changed, reply exactly NO_REPLY."
+        }
       },
       "contextPruning": {
         "mode": "cache-ttl",
-        "ttl": "5m"
+        "ttl": "5m",
+        "keepLastAssistants": 3,
+        "minPrunableToolChars": 20000,
+        "softTrim": {
+          "maxChars": 3000,
+          "headChars": 1200,
+          "tailChars": 1200
+        },
+        "hardClear": {
+          "enabled": true,
+          "placeholder": "[Old tool result content cleared]"
+        }
+      },
+      "contextLimits": {
+        "memoryGetMaxChars": 8000,
+        "memoryGetDefaultLines": 80,
+        "toolResultMaxChars": 10000,
+        "postCompactionMaxChars": 1000
       },
       "contextInjection": "continuation-skip"
     }
@@ -132,12 +167,15 @@
         "enabled": true
       },
       "limits": {
-        "timeoutMs": 300000
+        "maxResults": 5,
+        "maxSnippetChars": 1200,
+        "maxInjectedChars": 5000,
+        "timeoutMs": 120000
       },
       "update": {
-        "embedTimeoutMs": 300000,
-        "updateTimeoutMs": 300000,
-        "commandTimeoutMs": 300000
+        "embedTimeoutMs": 120000,
+        "updateTimeoutMs": 120000,
+        "commandTimeoutMs": 120000
       }
     }
   },
@@ -146,13 +184,17 @@
       "active-memory": {
         "enabled": true,
         "config": {
-          "enabled": true,
+          "enabled": false,
           "agents": ["main"],
           "allowedChatTypes": ["direct"],
           "queryMode": "message",
-          "promptStyle": "balanced",
-          "timeoutMs": 5000,
-          "maxSummaryChars": 220,
+          "promptStyle": "strict",
+          "timeoutMs": 10000,
+          "maxSummaryChars": 120,
+          "recentUserTurns": 0,
+          "recentAssistantTurns": 0,
+          "recentUserChars": 40,
+          "recentAssistantChars": 40,
           "persistTranscripts": false,
           "logging": true
         }
@@ -190,7 +232,7 @@
         "enabled": true,
         "config": {
           "dreaming": {
-            "enabled": true,
+            "enabled": false,
             "timezone": "Asia/Dubai",
             "frequency": "0 3 * * *"
           }
@@ -231,7 +273,8 @@
         "port": 3978,
         "path": "/api/messages"
       },
-      "requireMention": true,
+      "requireMention": false,
+      "groupPolicy": "disabled",
       "replyStyle": "thread"
     }
   }

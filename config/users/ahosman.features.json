@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "user": {
+    "name": "Dr. Ahmed Osman",
+    "preferredName": "Ahmed",
+    "timezone": "Asia/Dubai",
+    "role": "Managing Director Executive Affairs",
+    "notes": [
+      "Executive leadership role",
+      "Oversight of executive affairs and cross-sector coordination"
+    ]
+  },
+  "boards": {
+    "enabled": []
+  }
+}

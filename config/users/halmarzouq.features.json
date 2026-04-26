@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "user": {
+    "name": "Hadeel Fayez Al Marzouq",
+    "preferredName": "Hadeel",
+    "timezone": "Asia/Dubai",
+    "role": "Section Head Quality Assurance",
+    "notes": [
+      "Section head role",
+      "Accountable for quality assurance oversight"
+    ]
+  },
+  "boards": {
+    "enabled": []
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "user": {
+    "name": "Abdulaziz Rashed Abdulla Alshamsi",
+    "preferredName": "Abdulaziz",
+    "timezone": "Asia/Dubai",
+    "role": "Senior Protocols Officer",
+    "notes": [
+      "Senior individual contributor role",
+      "Handles protocol and coordination activities"
+    ]
+  },
+  "boards": {
+    "enabled": []
+  }
+}

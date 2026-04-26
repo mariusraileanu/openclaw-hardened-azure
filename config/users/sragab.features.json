@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "user": {
+    "name": "Samar Hanafy Fahmy Ragab",
+    "preferredName": "Samar",
+    "timezone": "Asia/Dubai",
+    "role": "Head of Business Intelligence",
+    "notes": [
+      "Functional head role",
+      "Accountable for business intelligence delivery"
+    ]
+  },
+  "boards": {
+    "enabled": []
+  }
+}

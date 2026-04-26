@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "user": {
+    "name": "Juanjo do Olmo Otero",
+    "preferredName": "Juanjo",
+    "timezone": "Asia/Dubai",
+    "role": "Senior Specialist AI",
+    "notes": [
+      "Senior technical specialist role",
+      "Focus on applied artificial intelligence"
+    ]
+  },
+  "boards": {
+    "enabled": []
+  }
+}

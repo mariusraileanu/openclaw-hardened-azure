@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "user": {
+    "name": "Waqar Mian Mahmood",
+    "preferredName": "Waqar",
+    "timezone": "Asia/Dubai",
+    "role": "Managing Director Transformation",
+    "notes": [
+      "Executive leadership role",
+      "Leads organization-wide transformation initiatives"
+    ]
+  },
+  "boards": {
+    "enabled": ["fertility", "strategic-health"]
+  }
+}

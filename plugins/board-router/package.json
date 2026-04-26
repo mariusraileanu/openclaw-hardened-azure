@@ -1,0 +1,17 @@
+{
+  "name": "@openclaw/board-router",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "peerDependencies": {
+    "openclaw": "*"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "^0.34.41"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

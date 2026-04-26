@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "user": {
+    "name": "Fahim Jawdat Halawa",
+    "preferredName": "Fahim",
+    "timezone": "Asia/Dubai",
+    "role": "Acting Division Director Information Technology Services",
+    "notes": [
+      "Acting division director role",
+      "Leads IT services and infrastructure operations"
+    ]
+  },
+  "boards": {
+    "enabled": []
+  }
+}

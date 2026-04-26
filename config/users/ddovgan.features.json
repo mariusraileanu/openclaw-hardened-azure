@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "user": {
+    "name": "Dmytro Dovgan",
+    "preferredName": "Dmytro",
+    "timezone": "Asia/Dubai",
+    "role": "Head of Data Science",
+    "notes": [
+      "Functional head role",
+      "Leads data science and AI initiatives"
+    ]
+  },
+  "boards": {
+    "enabled": ["fertility", "strategic-health"]
+  }
+}

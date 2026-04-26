@@ -1,0 +1,14 @@
+{
+  "meetingId": "fertility-local-test-001",
+  "boardId": "fertility",
+  "agendaTopic": "National fertility pathway redesign with AI-supported triage and value-based reimbursement",
+  "agendaSummary": "Evaluate whether the health system should pilot a redesigned fertility pathway that combines AI-assisted intake triage, standardized clinical protocols across providers, and value-based reimbursement tied to outcomes and patient experience.",
+  "context": [
+    "The proposed pilot would launch across a limited set of providers before wider scale-up.",
+    "The reform aims to reduce time-to-treatment, improve patient navigation, and increase consistency of care quality.",
+    "AI support would be used for intake, pathway routing, and patient communications, but not autonomous diagnosis.",
+    "Payment reform would shift part of reimbursement toward outcomes, continuity, and patient experience metrics.",
+    "The chairman should choose only the members most relevant to this topic."
+  ],
+  "decisionRequest": "Should the board recommend approval, rejection, deferment, or request_more_analysis for this pilot? If approval is recommended, specify guardrails and next actions."
+}

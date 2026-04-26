@@ -63,12 +63,20 @@ def ensure_terraform_provider_auth(repo_root: Path, context: dict[str, str]) -> 
 
 def discover_deployer_ips(repo_root: Path) -> str:
     script = (
-        "ip1=$(curl -s --connect-timeout 5 ifconfig.me 2>/dev/null || true); "
-        "ip2=$(curl -s --connect-timeout 5 https://api.ipify.org 2>/dev/null || true); "
-        'if [ -z "$ip1" ] && [ -z "$ip2" ]; then echo ""; '
-        'elif [ "$ip1" = "$ip2" ] || [ -z "$ip2" ]; then echo "$ip1"; '
-        'elif [ -z "$ip1" ]; then echo "$ip2"; '
-        'else echo "$ip1,$ip2"; fi'
+        "collect() { "
+        "  for url in "
+        "    https://ifconfig.me "
+        "    https://api.ipify.org "
+        "    https://checkip.amazonaws.com "
+        "    https://icanhazip.com; do "
+        "    curl -4fsS --connect-timeout 5 --max-time 10 \"$url\" 2>/dev/null || true; "
+        "    printf '\\n'; "
+        "  done; "
+        "}; "
+        "{ collect; collect; } | "
+        "tr -d '\\r' | "
+        "grep -E '^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$' | "
+        "awk '!seen[$0]++' | paste -sd, -"
     )
     return run_capture(["bash", "-lc", script], repo_root)
 

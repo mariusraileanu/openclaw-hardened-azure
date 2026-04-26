@@ -6,7 +6,7 @@
 #   docker manifest inspect ghcr.io/openclaw/openclaw:latest
 #   docker inspect ghcr.io/openclaw/openclaw:latest --format='{{index .RepoDigests 0}}'
 
-FROM ghcr.io/openclaw/openclaw:2026.4.21
+FROM ghcr.io/openclaw/openclaw:2026.4.23
 
 USER root
 
@@ -37,6 +37,9 @@ COPY plugins/board-router/ /app/plugins/board-router/
 COPY workspace/ /app/config/workspace/
 COPY channels/loopback-proxy.mjs /app/channels/loopback-proxy.mjs
 COPY entrypoint.sh /app/entrypoint.sh
+
+# Install local board-router plugin dependencies into the bundled plugin folder
+RUN cd /app/plugins/board-router && npm install --omit=dev
 
 # Ensure entrypoint is executable
 RUN chmod +x /app/entrypoint.sh /app/platform/scripts/build_config.py /app/platform/scripts/feature_config.py /app/platform/scripts/render_workspaces.py /app/platform/scripts/run_board_meeting.mjs

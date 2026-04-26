@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "user": {
+    "name": "Austin Ross Wei Yen Beh",
+    "preferredName": "Austin",
+    "timezone": "Asia/Dubai",
+    "role": "Section Head, Digital Product Management",
+    "notes": [
+      "People management role",
+      "Accountable for digital product delivery"
+    ]
+  },
+  "boards": {
+    "enabled": []
+  }
+}

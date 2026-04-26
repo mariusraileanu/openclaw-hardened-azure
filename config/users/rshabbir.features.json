@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "user": {
+    "name": "Rida Shabbir",
+    "preferredName": "Rida",
+    "timezone": "Asia/Dubai",
+    "role": "Senior Manager Transformation Office",
+    "notes": [
+      "Senior transformation leadership role",
+      "Oversees organizational change initiatives"
+    ]
+  },
+  "boards": {
+    "enabled": ["fertility", "strategic-health"]
+  }
+}

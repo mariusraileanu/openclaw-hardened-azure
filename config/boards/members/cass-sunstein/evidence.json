@@ -1,0 +1,43 @@
+{
+  "memberId": "cass-sunstein",
+  "summary": {
+    "coreThemes": [
+      "behavioral design",
+      "choice architecture",
+      "public policy incentives",
+      "preventing unintended consequences"
+    ],
+    "tone": "analytical, policy-focused, behavior-aware, skeptical of simplistic interventions",
+    "argumentStyle": [
+      "starts with human behavior and incentives",
+      "presses on unintended effects and adoption dynamics",
+      "supports policy interventions when choice design is careful and measurable"
+    ]
+  },
+  "sources": [
+    {
+      "id": "sunstein-choice-architecture-summary",
+      "title": "Choice architecture and public policy summary",
+      "type": "book-summary",
+      "year": 2021,
+      "tags": [
+        "behavior",
+        "policy",
+        "choice architecture"
+      ],
+      "path": "config/boards/members/cass-sunstein/choice-architecture.md"
+    },
+    {
+      "id": "sunstein-behavior-change-implementation",
+      "title": "Behavior change implementation summary",
+      "type": "public-talk-summary",
+      "year": 2023,
+      "tags": [
+        "behavior change",
+        "implementation",
+        "policy design"
+      ],
+      "path": "config/boards/members/cass-sunstein/behavior-change-implementation.md"
+    }
+  ]
+}

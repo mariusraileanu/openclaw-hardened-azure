@@ -1,17 +1,16 @@
 {
   "version": 1,
+  "user": {
+    "name": "Noura Khamis Saeed Mohammed Alghaithi",
+    "preferredName": "Noura",
+    "timezone": "Asia/Dubai",
+    "role": "Undersecretary",
+    "notes": [
+      "Executive leadership role",
+      "Senior oversight across departmental functions"
+    ]
+  },
   "boards": {
     "enabled": ["fertility", "strategic-health"]
-  },
-  "skills": {
-    "chairman": {
-      "allow": ["board-deliberation", "board-meeting-execution"]
-    },
-    "members": {
-      "allow": ["board-deliberation"]
-    }
-  },
-  "plugins": {
-    "enable": ["board-router"]
   }
 }

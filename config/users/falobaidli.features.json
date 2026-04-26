@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "user": {
+    "name": "Fatima Adel Askar Husain Alobeidli",
+    "preferredName": "Fatima",
+    "timezone": "Asia/Dubai",
+    "role": "Officer Operation and Follow up Chairman Office",
+    "notes": [
+      "Operational support role",
+      "Handles follow-up and coordination activities"
+    ]
+  },
+  "boards": {
+    "enabled": []
+  }
+}

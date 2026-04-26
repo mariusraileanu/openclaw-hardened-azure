@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "user": {
+    "name": "Dr. Amit Ighani",
+    "preferredName": "Amit",
+    "timezone": "Asia/Dubai",
+    "role": "Manager DST",
+    "notes": [
+      "Management role",
+      "Responsible for digital strategy and transformation activities"
+    ]
+  },
+  "boards": {
+    "enabled": []
+  }
+}

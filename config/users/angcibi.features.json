@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "user": {
+    "name": "Avuyile Ngcibi",
+    "preferredName": "Avuyile",
+    "timezone": "Asia/Dubai",
+    "role": "Senior Manager DST",
+    "notes": [
+      "Senior management role",
+      "Involved in digital strategy and transformation initiatives"
+    ]
+  },
+  "boards": {
+    "enabled": []
+  }
+}

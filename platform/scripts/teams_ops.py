@@ -339,6 +339,7 @@ def teams_relay_deploy(repo_root: Path, env_name: str) -> int:
         "-target=azurerm_subnet.func",
         "-target=azapi_resource.func_storage",
         "-target=azapi_resource.func_deploy_container",
+        "-target=azapi_resource.func_board_queue",
         "-target=azapi_resource.func_routing_table",
         "-target=azurerm_role_assignment.func_storage_blob",
         "-target=azurerm_role_assignment.func_storage_queue_contributor",

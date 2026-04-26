@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "user": {
+    "name": "Ramesh Thyagaraj Murti",
+    "preferredName": "Ramesh",
+    "timezone": "Asia/Dubai",
+    "role": "Head of Product",
+    "notes": [
+      "Product leadership role",
+      "Ownership of product portfolio and roadmap"
+    ]
+  },
+  "boards": {
+    "enabled": []
+  }
+}

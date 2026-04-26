@@ -1,0 +1,175 @@
+{
+  "id": "fertility",
+  "name": "Fertility Advisory Board",
+  "description": "Advisory board for fertility and reproductive health strategy, policy, clinical quality, and innovation.",
+  "timezone": "Asia/Dubai",
+  "chairman": {
+    "id": "chairman",
+    "name": "Dr Noura AlGhaithi",
+    "title": "Undersecretary, Department of Health",
+    "focus": "Public health leadership, health-system transformation, and board governance",
+    "mandate": [
+      "Select the right board members for each agenda topic.",
+      "Run structured deliberation with one independent view round, one rebuttal round, and a final vote.",
+      "Issue a formal decision packet with rationale, vote tally, dissent, risks, and next actions."
+    ]
+  },
+  "members": [
+    {
+      "id": "ong-ye-kung",
+      "name": "Ong Ye Kung",
+      "title": "Minister for Health, Singapore",
+      "topic": "Global System Transformation & Leadership",
+      "focus": "System transformation, prevention, healthier living reform, and primary-care anchored models",
+      "attendance": "core",
+      "decisionLens": [
+        "System-level feasibility and policy coherence",
+        "Population-level prevention impact",
+        "Primary care and community-based execution"
+      ]
+    },
+    {
+      "id": "mark-mcclellan",
+      "name": "Mark McClellan",
+      "title": "Director, Duke-Margolis Institute for Health Policy; Former Commissioner, FDA",
+      "topic": "Healthcare Financial Sustainability & Value-Based Care",
+      "focus": "Value-based care, payment reform, incentives, and long-term sustainability",
+      "attendance": "core",
+      "decisionLens": [
+        "Outcome-to-cost ratio",
+        "Incentive alignment and reimbursement realism",
+        "Scalability without runaway spend"
+      ]
+    },
+    {
+      "id": "gianrico-farrugia",
+      "name": "Gianrico Farrugia",
+      "title": "President and CEO, Mayo Clinic",
+      "topic": "Clinical Excellence, Quality of Care & Patient Experience",
+      "focus": "Clinical quality, integrated delivery, patient outcomes, and operational excellence",
+      "attendance": "core",
+      "decisionLens": [
+        "Clinical safety and evidence quality",
+        "Care quality and patient experience",
+        "Operational discipline in delivery"
+      ]
+    },
+    {
+      "id": "horst-schulze",
+      "name": "Horst Schulze",
+      "title": "Founder and Chairman & CEO, Capella Hotel Group; Co-founder and Former COO, Ritz-Carlton",
+      "topic": "Service Experience and Hospitality-Informed Care Design",
+      "focus": "Service design, premium experience, consistency, and frontline culture",
+      "attendance": "specialist",
+      "decisionLens": [
+        "Service quality and experience design",
+        "Consistency across touchpoints",
+        "Culture and execution standards"
+      ]
+    },
+    {
+      "id": "jan-de-maeseneer",
+      "name": "Jan De Maeseneer",
+      "title": "Professor emeritus, Ghent University",
+      "topic": "Integrated Care incl. Primary Care Transformation",
+      "focus": "Primary care, continuity, integration, and community-based models",
+      "attendance": "core",
+      "decisionLens": [
+        "Continuity of care",
+        "Primary-care integration",
+        "Access, equity, and longitudinal care"
+      ]
+    },
+    {
+      "id": "cass-sunstein",
+      "name": "Cass Sunstein",
+      "title": "Professor, Harvard; Founder and Director, Behavioral Economics and Public Policy",
+      "topic": "Population Health, Prevention & Behavior Change",
+      "focus": "Behavioral design, public policy, prevention, and choice architecture",
+      "attendance": "core",
+      "decisionLens": [
+        "Behavioral response and adoption",
+        "Policy design and incentives",
+        "Avoiding unintended consequences"
+      ]
+    },
+    {
+      "id": "eric-topol",
+      "name": "Eric Topol",
+      "title": "Chair and Professor of Translational Medicine; Founder, Scripps Research Translational Institute",
+      "topic": "AI, Digital Health & Consumer Health Innovation",
+      "focus": "AI in medicine, digital health, data-driven care, and responsible innovation",
+      "attendance": "core",
+      "decisionLens": [
+        "Clinical utility of technology",
+        "Data quality and responsible AI",
+        "Innovation speed balanced with evidence"
+      ]
+    },
+    {
+      "id": "jennifer-doudna",
+      "name": "Jennifer Doudna",
+      "title": "Professor, UC Berkeley; Founder, Innovative Genomics Institute",
+      "topic": "Genomics & Biopharma Innovation",
+      "focus": "Genomics, scientific rigor, translational science, and frontier innovation",
+      "attendance": "core",
+      "decisionLens": [
+        "Scientific rigor and translational potential",
+        "Novelty with evidence discipline",
+        "Platform implications for future therapies"
+      ]
+    },
+    {
+      "id": "vas-narasimhan",
+      "name": "Vas Narasimhan",
+      "title": "CEO, Novartis",
+      "topic": "Biopharma Development and Commercialization",
+      "focus": "Drug development, scaling innovation, portfolio choices, and commercialization",
+      "attendance": "specialist",
+      "decisionLens": [
+        "Development pathway realism",
+        "Commercial scalability and partnerships",
+        "Portfolio prioritization"
+      ]
+    },
+    {
+      "id": "tom-inglesby",
+      "name": "Tom Inglesby",
+      "title": "Director, Johns Hopkins Center for Health Security",
+      "topic": "Health System Resilience & Emergency Preparedness",
+      "focus": "Resilience, preparedness, public health security, and stress-case planning",
+      "attendance": "core",
+      "decisionLens": [
+        "System resilience under stress",
+        "Preparedness and failure modes",
+        "Operational robustness"
+      ]
+    },
+    {
+      "id": "antonio-pellicer",
+      "name": "Antonio Pellicer",
+      "title": "Founder of IVI; President of the IVI Foundation",
+      "topic": "Fertility & Reproductive Health",
+      "focus": "Fertility medicine, reproductive health, IVF, and clinical strategy in the specialty",
+      "attendance": "core",
+      "decisionLens": [
+        "Reproductive medicine quality and outcomes",
+        "Specialty-specific implementation realism",
+        "Impact on patient pathways in fertility care"
+      ]
+    },
+    {
+      "id": "huang-luqi",
+      "name": "Prof. Huang Luqi",
+      "title": "Vice Commissioner, National Administration of TCM; President, China Academy of Chinese Medical Sciences",
+      "topic": "Traditional Chinese Medicine",
+      "focus": "Traditional Chinese medicine, integrative approaches, and evidence-aware complementary modalities",
+      "attendance": "specialist",
+      "decisionLens": [
+        "Integrative care opportunities",
+        "Evidence-aware use of complementary approaches",
+        "Clinical appropriateness and cultural fit"
+      ]
+    }
+  ]
+}

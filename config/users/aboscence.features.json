@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "user": {
+    "name": "Andrew Michael Boscence",
+    "preferredName": "Andrew",
+    "timezone": "Asia/Dubai",
+    "role": "Section Head, Data Engineering",
+    "notes": [
+      "Section head role",
+      "Responsible for data engineering platforms and pipelines"
+    ]
+  },
+  "boards": {
+    "enabled": []
+  }
+}

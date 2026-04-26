@@ -13,6 +13,8 @@ channels/teams-relay
 .env
 .env.*
 !.env.example
+config/**/*.env
+!config/**/*.example.env
 *.tfstate
 *.tfstate.*
 .terraform/

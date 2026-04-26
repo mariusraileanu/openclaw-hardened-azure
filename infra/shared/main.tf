@@ -1217,6 +1217,17 @@ resource "azapi_resource" "func_deploy_container" {
   }
 }
 
+resource "azapi_resource" "func_board_queue" {
+  count     = var.msteams_relay_enabled ? 1 : 0
+  type      = "Microsoft.Storage/storageAccounts/queueServices/queues@2023-05-01"
+  name      = "teams-board-requests"
+  parent_id = "${azapi_resource.func_storage[0].id}/queueServices/default"
+
+  body = {
+    properties = {}
+  }
+}
+
 # RBAC: managed identity needs blob access for Function App deployment storage
 resource "azurerm_role_assignment" "func_storage_blob" {
   count                = var.msteams_relay_enabled ? 1 : 0
@@ -1309,19 +1320,24 @@ resource "azurerm_linux_function_app" "relay" {
   virtual_network_subnet_id = azurerm_subnet.func[0].id
 
   app_settings = {
-    CAE_DEFAULT_DOMAIN               = azurerm_container_app_environment.shared.default_domain
-    ENVIRONMENT                      = var.environment
-    ROUTING_PROVIDER                 = "azure_table"
-    ROUTING_STORAGE_ACCOUNT_NAME     = azapi_resource.func_storage[0].name
-    ROUTING_TABLE_NAME               = azapi_resource.func_routing_table[0].name
-    ROUTING_CACHE_TTL_SEC            = "600"
-    ROUTING_FAILURE_THRESHOLD        = "3"
-    ROUTING_CIRCUIT_OPEN_SEC         = "60"
-    MSTEAMS_EXPECTED_TENANT_ID       = var.msteams_tenant_id
-    WEBSITE_RUN_FROM_PACKAGE         = "1"
-    AzureWebJobsStorage__accountName = azapi_resource.func_storage[0].name
-    AzureWebJobsStorage__credential  = "managedidentity"
-    AzureWebJobsStorage__clientId    = azurerm_user_assigned_identity.shared.client_id
+    CAE_DEFAULT_DOMAIN                = azurerm_container_app_environment.shared.default_domain
+    ENVIRONMENT                       = var.environment
+    ROUTING_PROVIDER                  = "azure_table"
+    ROUTING_STORAGE_ACCOUNT_NAME      = azapi_resource.func_storage[0].name
+    ROUTING_TABLE_NAME                = azapi_resource.func_routing_table[0].name
+    ROUTING_CACHE_TTL_SEC             = "600"
+    ROUTING_FAILURE_THRESHOLD         = "3"
+    ROUTING_CIRCUIT_OPEN_SEC          = "60"
+    MSTEAMS_EXPECTED_TENANT_ID        = var.msteams_tenant_id
+    MSTEAMS_APP_ID                    = var.msteams_app_id
+    MSTEAMS_APP_SECRET_VALUE          = var.msteams_app_secret_value != "" ? "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.msteams_app_password[0].versionless_id})" : ""
+    MSTEAMS_BOT_TOKEN_TENANT_ID       = var.msteams_tenant_id
+    MSTEAMS_BOARD_QUEUE_NAME          = azapi_resource.func_board_queue[0].name
+    MSTEAMS_BOARD_UPSTREAM_TIMEOUT_MS = "600000"
+    WEBSITE_RUN_FROM_PACKAGE          = "1"
+    AzureWebJobsStorage__accountName  = azapi_resource.func_storage[0].name
+    AzureWebJobsStorage__credential   = "managedidentity"
+    AzureWebJobsStorage__clientId     = azurerm_user_assigned_identity.shared.client_id
   }
 
   site_config {

@@ -1,0 +1,43 @@
+{
+  "memberId": "tom-inglesby",
+  "summary": {
+    "coreThemes": [
+      "system resilience",
+      "preparedness and stress testing",
+      "public health security",
+      "failure-mode thinking in health systems"
+    ],
+    "tone": "risk-aware, resilience-focused, operationally sober, preparedness-oriented",
+    "argumentStyle": [
+      "starts with downside risk and system failure modes",
+      "presses on resilience under stress and crisis conditions",
+      "supports innovation when fallback paths, monitoring, and response capacity are explicit"
+    ]
+  },
+  "sources": [
+    {
+      "id": "inglesby-health-security-resilience",
+      "title": "Health security and system resilience summary",
+      "type": "public-summary",
+      "year": 2023,
+      "tags": [
+        "resilience",
+        "preparedness",
+        "health security"
+      ],
+      "path": "config/boards/members/tom-inglesby/health-security-resilience.md"
+    },
+    {
+      "id": "inglesby-preparedness-failure-modes",
+      "title": "Preparedness and failure mode planning summary",
+      "type": "public-talk-summary",
+      "year": 2022,
+      "tags": [
+        "preparedness",
+        "failure modes",
+        "operations"
+      ],
+      "path": "config/boards/members/tom-inglesby/preparedness-failure-modes.md"
+    }
+  ]
+}

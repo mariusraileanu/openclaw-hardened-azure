@@ -1,27 +1,16 @@
 {
   "version": 1,
   "user": {
-    "name": "Marius Raileanu",
+    "name": "Marius Lucian Raileanu",
     "preferredName": "Marius",
     "timezone": "Asia/Dubai",
     "role": "Managing Director, Digital Health",
     "notes": [
-      "Prefers concise answers with clear next steps",
-      "Assume technical audience"
+      "Executive leadership role",
+      "Responsible for digital health strategy and execution"
     ]
   },
   "boards": {
     "enabled": ["fertility", "strategic-health"]
-  },
-  "skills": {
-    "chairman": {
-      "allow": ["board-deliberation", "board-meeting-execution"]
-    },
-    "members": {
-      "allow": ["board-deliberation"]
-    }
-  },
-  "plugins": {
-    "enable": ["board-router"]
   }
 }

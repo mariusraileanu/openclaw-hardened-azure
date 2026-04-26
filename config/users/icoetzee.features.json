@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "user": {
+    "name": "Ian Coetzee",
+    "preferredName": "Ian",
+    "timezone": "Asia/Dubai",
+    "role": "Section Head, Data and Digital Governance",
+    "notes": [
+      "Section head role",
+      "Responsible for data and digital governance frameworks"
+    ]
+  },
+  "boards": {
+    "enabled": []
+  }
+}

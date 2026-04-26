@@ -50,7 +50,10 @@ locals {
       { name = "COMPASS_API_KEY", secretRef = "compass-api-key" },
       { name = "GRAPH_MCP_URL", secretRef = "graph-mcp-url" },
       { name = "USER_SLUG", value = var.user_slug },
+      { name = "AZURE_ENVIRONMENT", value = var.environment },
       { name = "OPENCLAW_FEATURES_JSON", value = var.openclaw_features_json },
+      { name = "AZURE_CONTAINERAPPS_DEFAULT_DOMAIN", value = data.azurerm_container_app_environment.shared.default_domain },
+      { name = "OPENCLAW_DISABLE_BONJOUR", value = "1" },
       # Gateway runs on loopback behind the HTTP proxy; token auth is unnecessary.
       { name = "OPENCLAW_FORCE_NO_AUTH", value = "true" },
     ],
@@ -128,7 +131,7 @@ locals {
                 }
                 periodSeconds    = 6
                 timeoutSeconds   = 3
-                failureThreshold = 10
+                failureThreshold = 30
               },
               {
                 type = "Liveness"
@@ -382,8 +385,23 @@ resource "azurerm_container_app" "user" {
       }
 
       env {
+        name  = "AZURE_ENVIRONMENT"
+        value = var.environment
+      }
+
+      env {
         name  = "OPENCLAW_FEATURES_JSON"
         value = var.openclaw_features_json
+      }
+
+      env {
+        name  = "AZURE_CONTAINERAPPS_DEFAULT_DOMAIN"
+        value = data.azurerm_container_app_environment.shared.default_domain
+      }
+
+      env {
+        name  = "OPENCLAW_DISABLE_BONJOUR"
+        value = "1"
       }
 
       env {
@@ -491,14 +509,14 @@ resource "azurerm_container_app" "user" {
       }
 
       # Startup probe: generous failure threshold for gateway initialization
-      # 10 * 6s = 60s max startup time (max failure_count_threshold is 10)
+      # 30 * 6s = 180s max startup time (board-router plugin install takes ~52s)
       startup_probe {
         transport = "TCP"
         port      = 18789
 
         interval_seconds        = 6
         timeout                 = 3
-        failure_count_threshold = 10
+        failure_count_threshold = 30
       }
 
       # Liveness probe: restart if gateway becomes unresponsive

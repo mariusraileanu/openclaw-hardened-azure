@@ -58,6 +58,57 @@ def read_json(path: Path) -> dict:
         return json.load(f)
 
 
+def read_existing_gateway_token(path: Path) -> str | None:
+    if not path.exists():
+        return None
+
+    try:
+        data = read_json(path)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    gateway = data.get("gateway")
+    if not isinstance(gateway, dict):
+        return None
+
+    auth = gateway.get("auth")
+    if not isinstance(auth, dict):
+        return None
+
+    token = auth.get("token")
+    return token if isinstance(token, str) and token.strip() else None
+
+
+def read_existing_meta(path: Path) -> dict | None:
+    candidates = [path, Path(f"{path}.last-good")]
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+
+        try:
+            data = read_json(candidate)
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        meta = data.get("meta")
+        if isinstance(meta, dict):
+            return meta
+
+    return None
+
+
+def resolve_gateway_token(user_slug: str | None, existing_token: str | None) -> str:
+    if existing_token:
+        return existing_token
+
+    env_token = os.environ.get("OPENCLAW_GATEWAY_AUTH_TOKEN", "").strip()
+    if env_token:
+        return env_token
+
+    scope = user_slug or "local"
+    return hashlib.sha256(f"openclaw-gateway:{scope}".encode("utf-8")).hexdigest()
+
+
 def build_board_agents(
     state_dir: str, board_dir: Path, board_ids: list[str]
 ) -> tuple[list[dict], list[str]]:
@@ -128,6 +179,9 @@ def main() -> None:
     is_azure = bool(os.environ.get("USER_SLUG"))
     user_slug = os.environ.get("USER_SLUG", "").strip() or None
     force_no_auth = env_flag("OPENCLAW_FORCE_NO_AUTH")
+    existing_gateway_token = read_existing_gateway_token(output_path)
+    existing_meta = read_existing_meta(output_path)
+    gateway_token = resolve_gateway_token(user_slug, existing_gateway_token)
     feature_config = load_feature_config(
         REPO_ROOT, os.environ.get("AZURE_ENVIRONMENT", "dev"), user_slug
     )
@@ -184,6 +238,19 @@ def main() -> None:
     agents_cfg = ensure_path(cfg, ["agents"])
     agents_cfg["defaults"] = defaults
     plugin_entries = ensure_path(cfg, ["plugins", "entries"])
+    plugins = ensure_path(cfg, ["plugins"])
+    plugin_load_paths = ensure_path(plugins, ["load"])
+    paths = plugin_load_paths.get("paths")
+    if not isinstance(paths, list):
+        paths = []
+    board_router_path = "/app/plugins/board-router"
+    if board_router_path not in paths:
+        paths.append(board_router_path)
+    plugin_load_paths["paths"] = paths
+    memory_wiki_vault = ensure_path(
+        plugin_entries, ["memory-wiki", "config", "vault"]
+    )
+    memory_wiki_vault["path"] = f"{state_dir}/wiki/main"
     main_agent = build_main_agent(state_dir)
     agents_cfg["list"] = [main_agent]
 
@@ -241,7 +308,7 @@ def main() -> None:
         webhook["port"] = 3978
         webhook["path"] = "/api/messages"
         if "requireMention" not in msteams:
-            msteams["requireMention"] = True
+            msteams["requireMention"] = False
         if "replyStyle" not in msteams:
             msteams["replyStyle"] = "thread"
         if is_azure:
@@ -272,12 +339,18 @@ def main() -> None:
     ]:
         msteams.pop(stale, None)
 
+    auto_enabled_plugins: set[str] = set()
+    if signal_ready:
+        auto_enabled_plugins.add("signal")
+    if teams_ready:
+        auto_enabled_plugins.add("msteams")
+
     gateway = ensure_path(cfg, ["gateway"])
     auth = ensure_path(gateway, ["auth"])
 
     if force_no_auth:
-        auth["mode"] = "none"
-        auth.pop("token", None)
+        auth["mode"] = "token"
+        auth["token"] = gateway_token
     elif is_azure:
         token = os.environ.get("OPENCLAW_GATEWAY_AUTH_TOKEN", "").strip()
         if not token:
@@ -285,13 +358,19 @@ def main() -> None:
                 "OPENCLAW_GATEWAY_AUTH_TOKEN is required in Azure/user mode unless OPENCLAW_FORCE_NO_AUTH=true"
             )
         auth["mode"] = "token"
+        auth["token"] = token
     else:
         auth["mode"] = "none"
-        auth.pop("token", None)
+        auth["token"] = gateway_token
 
     control_ui = ensure_path(gateway, ["controlUi"])
     if is_azure:
-        control_ui["dangerouslyAllowHostHeaderOriginFallback"] = True
+        default_domain = os.environ.get("AZURE_CONTAINERAPPS_DEFAULT_DOMAIN", "").strip()
+        if default_domain:
+            control_ui["allowedOrigins"] = [
+                f"https://ca-openclaw-{os.environ.get('AZURE_ENVIRONMENT', 'dev')}-{user_slug}.{default_domain}"
+            ]
+        control_ui.pop("dangerouslyAllowHostHeaderOriginFallback", None)
         control_ui.pop("dangerouslyDisableDeviceAuth", None)
     else:
         control_ui.pop("dangerouslyAllowHostHeaderOriginFallback", None)
@@ -351,7 +430,36 @@ def main() -> None:
         if isinstance(plugin_cfg, dict):
             plugin_cfg.setdefault("enabled", True)
 
+    plugin_allow = set(plugin_entries.keys()) | auto_enabled_plugins
+    if plugin_allow:
+        plugins["allow"] = sorted(plugin_allow)
+    else:
+        plugins.pop("allow", None)
+
     cfg.pop("instructions", None)
+
+    if existing_meta:
+        cfg["meta"] = existing_meta
+
+    if output_path.exists():
+        try:
+            current = json.dumps(read_json(output_path), indent=2, sort_keys=True)
+            candidate = json.dumps(cfg, indent=2, sort_keys=True)
+            if current == candidate:
+                digest = hashlib.sha256(candidate.encode("utf-8")).hexdigest()
+                env_label = "azure" if is_azure else "local"
+                print(
+                    f"Runtime config unchanged [{env_label}] -> {output_path} sha256={digest}"
+                )
+                return
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    if output_path.exists():
+        try:
+            output_path.unlink()
+        except OSError:
+            pass
 
     rendered = json.dumps(cfg, indent=2, sort_keys=True)
     output_path.parent.mkdir(parents=True, exist_ok=True)

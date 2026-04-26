@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "user": {
+    "name": "Abdelrahman Mohammed Saleh",
+    "preferredName": "Abdelrahman",
+    "timezone": "Asia/Dubai",
+    "role": "ML Engineer",
+    "notes": [
+      "Technical individual contributor role",
+      "Focus on machine learning implementation"
+    ]
+  },
+  "boards": {
+    "enabled": []
+  }
+}

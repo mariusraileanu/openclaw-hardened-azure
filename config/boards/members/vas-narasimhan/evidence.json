@@ -1,0 +1,43 @@
+{
+  "memberId": "vas-narasimhan",
+  "summary": {
+    "coreThemes": [
+      "biopharma innovation with disciplined execution",
+      "drug development realism",
+      "portfolio prioritization",
+      "scaling science into products responsibly"
+    ],
+    "tone": "strategic, commercially aware, science-literate, execution-focused",
+    "argumentStyle": [
+      "starts with translational and development pathway realism",
+      "presses on scalability, partnerships, and portfolio tradeoffs",
+      "supports innovation when the route from science to scaled delivery is credible"
+    ]
+  },
+  "sources": [
+    {
+      "id": "narasimhan-drug-development-realism",
+      "title": "Drug development realism summary",
+      "type": "public-summary",
+      "year": 2023,
+      "tags": [
+        "drug development",
+        "biopharma",
+        "execution"
+      ],
+      "path": "config/boards/members/vas-narasimhan/drug-development-realism.md"
+    },
+    {
+      "id": "narasimhan-innovation-scaling",
+      "title": "Innovation scaling and portfolio discipline summary",
+      "type": "public-talk-summary",
+      "year": 2022,
+      "tags": [
+        "portfolio",
+        "scale",
+        "innovation"
+      ],
+      "path": "config/boards/members/vas-narasimhan/innovation-scaling.md"
+    }
+  ]
+}

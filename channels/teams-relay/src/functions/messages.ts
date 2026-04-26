@@ -3,8 +3,16 @@ import {
   HttpRequest,
   HttpResponseInit,
   InvocationContext,
+  output,
 } from "@azure/functions";
 
+import {
+  BoardQueueMessage,
+  TeamsActivityEnvelope,
+  isBoardMeetingRequest,
+  parseBoardMeetingRequest,
+  resolveBoardQueueName,
+} from "../lib/board-work";
 import {
   resolveCorrelationId,
   withCorrelationHeader,
@@ -43,16 +51,10 @@ const SKIP_RESPONSE_HEADERS = new Set([
   "keep-alive",
 ]);
 
-type ActivityEnvelope = {
-  from?: {
-    aadObjectId?: string;
-  };
-  channelData?: {
-    tenant?: {
-      id?: string;
-    };
-  };
-};
+const boardQueueOutput = output.storageQueue({
+  queueName: resolveBoardQueueName(),
+  connection: "AzureWebJobsStorage",
+});
 
 function appendMessagesPath(baseUrl: string): string {
   return `${baseUrl.replace(/\/$/, "")}/api/messages`;
@@ -75,6 +77,33 @@ function logRoutingResult(context: InvocationContext, payload: Record<string, un
   context.log(`relay_event=${JSON.stringify(payload)}`);
 }
 
+function collectForwardHeaders(request: HttpRequest): Record<string, string> {
+  const headers: Record<string, string> = {};
+  for (const [key, value] of request.headers.entries()) {
+    if (!SKIP_REQUEST_HEADERS.has(key.toLowerCase())) {
+      headers[key] = value;
+    }
+  }
+  if (!headers["content-type"]) {
+    headers["content-type"] = "application/json";
+  }
+  return headers;
+}
+
+function boardMeetingAccepted(correlationId: string): HttpResponseInit {
+  return {
+    status: 200,
+    headers: {
+      "content-type": "application/json",
+      "x-correlation-id": correlationId,
+    },
+    jsonBody: {
+      type: "message",
+      text: "Running the board meeting now. It takes several minutes. I'll post the result here when it finishes.",
+    },
+  };
+}
+
 async function relayToUpstream(
   routing: RoutingRecord,
   bodyText: string,
@@ -85,16 +114,7 @@ async function relayToUpstream(
   const upstreamUrl = appendMessagesPath(routing.upstreamUrl);
   const startedAt = Date.now();
 
-  const headers: Record<string, string> = {};
-  for (const [key, value] of request.headers.entries()) {
-    if (!SKIP_REQUEST_HEADERS.has(key.toLowerCase())) {
-      headers[key] = value;
-    }
-  }
-  if (!headers["content-type"]) {
-    headers["content-type"] = "application/json";
-  }
-
+  const headers = collectForwardHeaders(request);
   const forwardHeaders = withCorrelationHeader(headers, correlationId);
 
   try {
@@ -167,6 +187,7 @@ app.http("messages", {
   methods: ["POST"],
   authLevel: "anonymous",
   route: "api/messages",
+  extraOutputs: [boardQueueOutput],
   handler: async (
     request: HttpRequest,
     context: InvocationContext
@@ -175,9 +196,9 @@ app.http("messages", {
     const correlationId = resolveCorrelationId(request);
 
     const bodyText = await request.text();
-    let activity: ActivityEnvelope;
+    let activity: TeamsActivityEnvelope;
     try {
-      activity = JSON.parse(bodyText) as ActivityEnvelope;
+      activity = JSON.parse(bodyText) as TeamsActivityEnvelope;
     } catch {
       logRoutingResult(context, {
         aadObjectId: "unknown",
@@ -271,6 +292,29 @@ app.http("messages", {
         result: "status_disabled",
       });
       return assistantDisabled(correlationId);
+    }
+
+    if (isBoardMeetingRequest(activity)) {
+      const workItem: BoardQueueMessage = {
+        activity,
+        bodyText,
+        correlationId,
+        headers: collectForwardHeaders(request),
+        boardRequest: parseBoardMeetingRequest(activity),
+        routing: resolution.record,
+        queuedAt: new Date().toISOString(),
+      };
+
+      context.extraOutputs.set(boardQueueOutput, JSON.stringify(workItem));
+      logRoutingResult(context, {
+        aadObjectId: resolution.record.aadObjectId,
+        userSlug: resolution.record.userSlug,
+        upstreamUrl: resolution.record.upstreamUrl,
+        correlationId,
+        latencyMs: Date.now() - requestStartedAt,
+        result: "board_request_queued",
+      });
+      return boardMeetingAccepted(correlationId);
     }
 
     return relayToUpstream(

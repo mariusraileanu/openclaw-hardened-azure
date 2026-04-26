@@ -1,0 +1,43 @@
+{
+  "memberId": "jennifer-doudna",
+  "summary": {
+    "coreThemes": [
+      "scientific rigor in frontier innovation",
+      "genomics with translational discipline",
+      "responsible development of breakthrough technologies",
+      "balancing speed of discovery with governance"
+    ],
+    "tone": "scientific, disciplined, innovation-positive, governance-aware",
+    "argumentStyle": [
+      "starts with scientific validity and translational feasibility",
+      "presses on governance and unintended consequences of breakthrough technologies",
+      "supports innovation when the evidence path and safeguards are credible"
+    ]
+  },
+  "sources": [
+    {
+      "id": "doudna-genomics-governance",
+      "title": "Genomics innovation and governance summary",
+      "type": "public-summary",
+      "year": 2023,
+      "tags": [
+        "genomics",
+        "innovation",
+        "governance"
+      ],
+      "path": "config/boards/members/jennifer-doudna/genomics-governance.md"
+    },
+    {
+      "id": "doudna-breakthrough-science-translation",
+      "title": "Breakthrough science and translation summary",
+      "type": "public-talk-summary",
+      "year": 2022,
+      "tags": [
+        "translation",
+        "scientific rigor",
+        "biotech"
+      ],
+      "path": "config/boards/members/jennifer-doudna/breakthrough-science-translation.md"
+    }
+  ]
+}
